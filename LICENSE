@@ -1,4 +1,71 @@
-                                 Apache License
+"Commons Clause" License Condition v1.0
+
+The Software is provided to you by the Licensor under the License, as defined
+below, subject to the following condition.
+
+Without limiting other conditions in the License, the grant of rights under the
+License will not include, and the License does not grant to you, the right to
+Sell the Software.
+
+For purposes of the foregoing, "Sell" means practicing any or all of the rights
+granted to you under the License to provide to third parties, for a fee or
+other consideration (including without limitation fees for hosting or
+consulting/support services related to the Software), a product or service
+whose value derives, entirely or substantially, from the functionality of the
+Software. Any license notice or attribution required by the License must also
+include this Commons Clause License Condition notice.
+
+
+"Competitive Use Restriction" v1.0
+
+In addition to the Commons Clause License Condition above, the grant of rights
+under the License does not include, and the License does not grant to you, the
+right to make any Competitive Use of the Software.
+
+For purposes of this Restriction, "Competitive Use" means using the Software,
+in whole or in part:
+
+  (a) in providing consulting, implementation, advisory, integration,
+      automation, or hosted services to third parties where such services
+      compete with services offered by Licensor; or
+
+  (b) as a component of, or in support of, any product or service offered by
+      you or your affiliates that competes with any product or service offered
+      by Licensor or its affiliates.
+
+Licensor's services include, without limitation: AI-driven business
+consulting; ERP, Odoo, and business-systems implementation, customization, or
+hosting; business-process automation; integration of AI tools into business
+workflows; and adjacent advisory or implementation work, in each case provided
+to small and mid-sized businesses.
+
+What is NOT Competitive Use (for clarity):
+
+  - Using the Software within your own business to analyze or operate your
+    own Odoo instance or your own data, regardless of your industry.
+  - Using the Software in a business whose primary activity is unrelated to
+    Licensor's services (e.g., a manufacturer, retailer, agency, or
+    professional-services firm outside the consulting/implementation field
+    using it on their own Odoo).
+  - Personal, educational, or research use.
+  - Internal use by individual employees of a competing firm for purposes
+    unrelated to that firm's competing services.
+
+Any license notice or attribution required by the License must also include
+this Competitive Use Restriction notice.
+
+
+Software:  odoo-sidekick
+License:   Apache License 2.0 + Commons Clause + Competitive Use Restriction
+Licensor:  SHIFTcollective
+Copyright: (c) 2026 SHIFTcollective. All rights reserved.
+
+For commercial inquiries or licensing exceptions, contact:
+  info@shiftcollective.co
+  https://shiftcollective.co
+
+================================================================================
+                                Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
 
@@ -137,8 +204,8 @@
 
    6. Trademarks. This License does not grant permission to use the trade
       names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
+      except as required for describing the origin of the Work and
+      reproducing the content of the NOTICE file.
 
    7. Disclaimer of Warranty. Unless required by applicable law or
       agreed to in writing, Licensor provides the Work (and each
@@ -174,28 +241,3 @@
       of your accepting any such warranty or additional liability.
 
    END OF TERMS AND CONDITIONS
-
-   APPENDIX: How to apply the Apache License to your work.
-
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
-
-   Copyright [yyyy] [name of copyright owner]
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.

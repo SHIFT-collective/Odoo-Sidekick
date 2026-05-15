@@ -1,0 +1,58 @@
+# odoo-sidekick profiles
+#
+# Place this at: ~/.config/odoo-sidekick/profiles.yaml
+# Override the path with the ODOO_PROFILES_PATH env var.
+#
+# Notes:
+#   - api_key values support ${ENV_VAR} substitution so secrets stay out of
+#     this file. Set them in your shell or via a .env loader.
+#   - 'database' is only required on Odoo hosts that serve multiple databases
+#     under a single domain. Odoo Online single-DB instances can omit it.
+#   - 'mode' is either 'read-only' (default if omitted) or 'read-write'.
+#     Read-only profiles physically cannot perform writes — the Python client
+#     refuses before sending any HTTP request. Read-write profiles allow
+#     writes but each user request still requires explicit chat-level
+#     confirmation from the user, and the Python client requires confirm=True
+#     per call.
+#   - 'default_context' is merged into every call. Useful for forcing a lang
+#     or timezone for consistent date/datetime interpretation.
+#   - Each api_key should belong to a dedicated Odoo user whose group
+#     memberships grant only the access you actually need:
+#       * read-only profiles → user with only read-side groups.
+#       * read-write profiles → user with the narrowest write groups required.
+
+default: main
+
+profiles:
+  # Primary read-only analytics profile. Cannot write under any circumstance.
+  main:
+    url: https://your-instance.odoo.com
+    api_key: ${ODOO_MAIN_API_KEY}
+    mode: read-only            # default; shown here for clarity
+    # database: your_database  # uncomment only if the host serves multiple DBs
+    default_context:
+      lang: en_US
+      tz: UTC
+
+  # Example of a profile that CAN write. Use sparingly — the API key here
+  # should be bound to an Odoo user with the narrowest possible group set.
+  # Even with this profile, every write requires --confirm at the CLI / 
+  # confirm=True in code / explicit user confirmation in chat.
+  main_rw:
+    url: https://your-instance.odoo.com
+    api_key: ${ODOO_MAIN_RW_API_KEY}
+    mode: read-write
+    default_context:
+      lang: en_US
+      tz: UTC
+
+  # Add additional profiles below for other Odoo instances (e.g. client
+  # tenants, staging environments). Default new profiles to read-only.
+  #
+  # client_a:
+  #   url: https://client-a.odoo.com
+  #   api_key: ${ODOO_CLIENT_A_API_KEY}
+  #   mode: read-only
+  #   default_context:
+  #     lang: en_US
+  #     tz: Europe/Madrid
