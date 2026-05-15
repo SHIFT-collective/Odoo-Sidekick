@@ -18,8 +18,24 @@ read-only; supports opt-in writes with explicit per-request user confirmation.
    need writes.
 4. Set your API key env var(s):
    `export ODOO_MAIN_API_KEY=...`
-5. Test connectivity:
+5. (Optional) Check what environment you're in:
+   `python -m scripts.detect_env`
+   The skill recognizes Claude.ai (sandboxed/ephemeral), Cowork and Claude
+   Code (local/persistent) and surfaces use-case guidance for each.
+6. Test connectivity:
    `python -m scripts.introspect main --list-models --pattern sale`
+
+## Which Claude surface should I use this from?
+
+| Surface | Filesystem | Config persists? | Best for |
+|---|---|---|---|
+| **Claude.ai** (web/mobile) | Sandboxed | No — ephemeral per conversation | One-off queries, exploration, mobile, demos |
+| **Cowork** | Your real filesystem | Yes | Recurring reports, local-file workflows (Excel/PDF), scheduled work |
+| **Claude Code** | Your real filesystem | Yes | Skill iteration, batch ops, automation, git |
+
+The skill itself travels across all three; profile configs do not. For
+persistent setups, install on Cowork or Claude Code. Run `detect_env` any
+time to see which surface you're in and what the implications are.
 
 ## Layout
 
@@ -33,7 +49,8 @@ odoo-sidekick/
 ├── scripts/
 │   ├── odoo_client.py                # JSON-2 client with mode + confirm gates
 │   ├── cache_sync.py                 # DuckDB/SQLite sync (always read-only)
-│   └── introspect.py                 # Schema & model discovery (always read-only)
+│   ├── introspect.py                 # Schema & model discovery (always read-only)
+│   └── detect_env.py                 # Surface detection + use-case guidance
 └── references/
     ├── api_reference.md
     ├── domain_syntax.md
@@ -100,7 +117,8 @@ c.unlink("res.partner", new_ids, confirm=True)   # irreversible!
 - v1.1 — Optional read-write mode with confirmation gates ✓
 - v1.2 — Per-request batched confirmation, onboarding flow, license ✓
 - v1.3 — Competitive Use Restriction, expanded onboarding (mode-first, two-path API key, welcome-back, failure recovery) ✓
-- v1.4 — Renamed to "Odoo Sidekick by SHIFTcollective" ✓ (current)
+- v1.4 — Renamed to "Odoo Sidekick by SHIFTcollective" ✓
+- v1.5 — Environment auto-detection (Claude.ai / Cowork / Claude Code), surface-aware onboarding, strengthened chat-history warnings, rotation reminder ✓ (current)
 - v2.0 — Insight layers on the cache: manufacturing demand forecasting,
   accounting-trend detection (P&L deltas, AR aging shifts, vendor
   concentration), sales/CRM insights (cohort analysis, deal velocity).

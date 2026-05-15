@@ -499,7 +499,7 @@ class OdooClient:
         headers = {
             "Authorization": f"bearer {self.profile.api_key}",
             "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "odoo-sidekick/1.4 (claude-skill)",
+            "User-Agent": "odoo-sidekick/1.5 (claude-skill)",
         }
         if self.profile.database:
             headers["X-Odoo-Database"] = self.profile.database

@@ -22,6 +22,40 @@ to read-only; supports opt-in writes with per-request user confirmation.
 
 Trigger whenever the user wants to do anything with data in Odoo — reads, analysis, reports, audits, dashboards, exports, **or** writes (creating/updating/deleting records, posting invoices, confirming orders, etc.).
 
+## Environment awareness
+
+Odoo Sidekick can run from three different Claude surfaces, and they have very different runtime semantics. The same skill code works everywhere, but **profile configs and cached databases do not travel between surfaces.** Before doing anything else on the first turn of a conversation, run the environment detector so the user knows what's possible here:
+
+```bash
+python -m scripts.detect_env
+```
+
+Surface the detector's output (or its key points) to the user in their working chat language. The detector reports the surface, whether the filesystem is sandboxed, where the config file lives, whether config persists, and surface-specific best-for / recommendations.
+
+### Surface comparison
+
+| Surface | Filesystem | Config persists? | Best for |
+|---|---|---|---|
+| **Claude.ai** (web/mobile) | Sandboxed container | No — ephemeral per conversation | One-off analytical queries, exploration, demos, mobile use |
+| **Cowork** | User's real filesystem | Yes | Recurring reports, integration with local files (Excel, PDFs), scheduled work |
+| **Claude Code** | User's real filesystem | Yes | Skill development, batch operations, automation, git workflows |
+
+### Cross-surface invariants
+
+- **Skills travel; profiles do not.** Installing the skill once makes it available on every surface, but a profile created in one surface does not transfer to another. A user who sets up the skill in Claude.ai and then wants to use it from Cowork needs to redo profile setup on their local machine.
+- **API keys pasted in chat persist forever.** Conversation history is long-lived regardless of surface, including across sessions, devices, and exports. This makes Path A (.env download) the right choice even in ephemeral sandboxes — the sandbox is ephemeral, the chat isn't.
+- **Dependencies don't auto-install on local surfaces.** On Cowork and Claude Code, the user needs Python 3 plus PyYAML (optional, for YAML profiles vs JSON) and DuckDB (optional, for the cache backend). On Claude.ai the sandbox usually has these or installs them automatically; on local surfaces the user owns this.
+
+### Recommendation by use case
+
+- "Show me last quarter's revenue" (one-off) → **Claude.ai** is fine.
+- "Build a daily AR aging report I run every morning" → **Cowork or Claude Code** on local machine. Persistent config, cron-able.
+- "Pull this data into a spreadsheet on my desktop" → **Cowork** — direct filesystem access to the user's machine.
+- "Iterate on the skill itself, contribute to the repo" → **Claude Code**.
+- "Quick check from my phone in a meeting" → **Claude.ai** mobile.
+
+When the use case is mixed, recommend setting up on Cowork or Claude Code first (persistent foundation), then using Claude.ai for ad-hoc additions. The profile YAML can be copied between machines manually; the API key value travels separately as an env var.
+
 ## Onboarding and connection management
 
 Before doing anything else when this skill is triggered, check whether the profile config file exists at `~/.config/odoo-sidekick/profiles.yaml` (or the path in `ODOO_PROFILES_PATH`).
@@ -55,7 +89,22 @@ Render this in the user's chat language (translate before showing). Preserve the
 
 Briefly tell the user what's about to happen — a one-time setup, takes a few minutes, mostly questions plus one trip to their Odoo to generate an API key.
 
-#### Step 2 — Mode first (this is the safety-defining question)
+#### Step 2 — Detect the environment, set expectations
+
+Before asking questions, run the environment detector so the conversation is grounded in what's actually possible here:
+
+```bash
+python -m scripts.detect_env
+```
+
+Surface the result to the user in their chat language. Be honest about constraints — especially when running in Claude.ai sandbox:
+
+- **If `claude.ai`**: tell the user clearly that this config will be ephemeral. Ask whether they're doing one-off work (proceed with setup here) or want a persistent setup (pause and direct them to Cowork or Claude Code, with a brief explanation of what each is good for).
+- **If `cowork` / `claude_code` / `local`**: tell them the config will persist and they only need to do this once.
+
+Don't skip this step even if the user seems impatient. Discovering 20 minutes in that their config evaporated when the conversation ended is worse than 30 seconds of framing now.
+
+#### Step 3 — Mode first (the safety-defining question)
 
 Ask about mode *before* anything else. This sets the tone for the whole connection and lets the user feel grounded about what the skill can and can't do. Use `ask_user_input_v0`:
 
@@ -70,18 +119,18 @@ Options: `["Read-only (recommended)", "Read-write", "Tell me more"]`.
 
 If the user picks "Tell me more", expand on the safety model (the three layers from this skill: profile mode, per-call confirm, chat-level batched confirmation) and re-ask.
 
-#### Step 3 — Odoo URL
+#### Step 4 — Odoo URL
 
 Ask for the Odoo URL. Format: `https://yourcompany.odoo.com`. Just a single question — no need to bundle.
 
-#### Step 4 — API key (two paths, security-critical)
+#### Step 5 — API key (two paths, security-critical)
 
 This is the moment where things get technical. Offer the user a choice via `ask_user_input_v0`:
 
 > Now for the API key. There are two ways to set this up; one is significantly safer than the other.
 >
 > - **Path A — Download a `.env` file (recommended).** I'll generate a template file. You download it, paste your API key into it locally (in your editor or terminal), then load it into your shell. The key never appears in this chat.
-> - **Path B — Paste the key here in chat (not recommended).** Simpler but less secure. The key ends up in your chat history; anyone who can read this conversation — through screenshots, exports, or future access to your Claude account — will have your Odoo credentials.
+> - **Path B — Paste the key here in chat (not recommended).** Simpler but less secure. **The key ends up in your chat history permanently** — anyone who can read this conversation, now or in the future (exports, screenshots, account access, future device sign-ins), will have your Odoo credentials. The sandbox is ephemeral; the chat history is not.
 >
 > If either path feels unclear or risky, SHIFTcollective offers concierge setup assistance — reach out to [info@shiftcollective.co](mailto:info@shiftcollective.co) and they'll get you up and running.
 
@@ -121,8 +170,9 @@ Options: `["Path A: .env file (recommended)", "Path B: paste in chat", "I'd like
 1. Repeat the warning briefly and use `ask_user_input_v0` to confirm: `["Yes, I understand the risk and want to paste it here", "Actually, let me try Path A", "I'd like help from SHIFTcollective"]`. Only proceed if the user explicitly re-confirms.
 2. Walk through generating the key in Odoo (same steps as Path A).
 3. When the user pastes the key, do NOT acknowledge the key value in chat. Just say "Got it" and move to the next step.
-4. Store the key inline in the YAML when generating the config in Step 6 (not as `${ENV_VAR}`). Add a comment to the YAML: `# WARNING: API key is stored inline. Do not commit, share, or screenshot this file.`
+4. Store the key inline in the YAML when generating the config in Step 7 (not as `${ENV_VAR}`). Add a comment to the YAML: `# WARNING: API key is stored inline. Do not commit, share, or screenshot this file.`
 5. Redact the key in any subsequent chat output (the client already redacts common patterns, but be deliberate).
+6. **At the end of the work session**, remind the user to rotate the key: "Since your API key is now in this conversation's history, consider rotating it in Odoo once you're done (Settings → Users → your user → API Keys → revoke + regenerate). I'll wait if you want to do that now."
 
 **If "I'd like help from SHIFTcollective":**
 
@@ -132,11 +182,11 @@ Render (translated):
 
 Don't proceed with setup until the user comes back.
 
-#### Step 5 — Profile name
+#### Step 6 — Profile name
 
 Ask for a short label. Suggest a default based on context (e.g. the Odoo subdomain, or `main` if they're just getting started). Example: "What should I call this connection? Something short like `main`, `prod`, or your company name."
 
-#### Step 6 — Generate and save config
+#### Step 7 — Generate and save config
 
 Show the assembled YAML and ask permission to save it:
 
@@ -155,7 +205,9 @@ profiles:
 
 If the user approves, write to `~/.config/odoo-sidekick/profiles.yaml`. Create the directory if it doesn't exist.
 
-#### Step 7 — Verify connection
+**If the environment detector in Step 2 reported `claude.ai`**, mention once here: "Note — this config lives inside the conversation's sandbox. If you close this conversation, you'll need to redo this setup in any new conversation. For a persistent setup, run the skill from Cowork or Claude Code on your local machine."
+
+#### Step 8 — Verify connection
 
 Run:
 ```bash
@@ -164,7 +216,7 @@ python -m scripts.introspect <profile> --list-models --pattern sale
 
 If it succeeds, tell the user and proceed to handle their original request.
 
-#### Step 8 — Handle verification failures
+#### Step 9 — Handle verification failures
 
 If introspect fails, **do not leave the user stuck.** Diagnose from the error message and walk them back to the relevant step. Common cases:
 
