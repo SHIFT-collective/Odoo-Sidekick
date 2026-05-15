@@ -46,11 +46,13 @@ odoo-sidekick/
 ├── LICENSE                           # Apache 2.0 + Commons Clause + Competitive Use Restriction
 ├── assets/
 │   └── profiles.example.yaml         # Profile config template
+├── VERSION                           # Single source of truth for the skill's version
 ├── scripts/
 │   ├── odoo_client.py                # JSON-2 client with mode + confirm gates
 │   ├── cache_sync.py                 # DuckDB/SQLite sync (always read-only)
 │   ├── introspect.py                 # Schema & model discovery (always read-only)
-│   └── detect_env.py                 # Surface detection + use-case guidance
+│   ├── detect_env.py                 # Surface detection + use-case guidance
+│   └── check_updates.py              # Compare local VERSION against upstream GitHub
 └── references/
     ├── api_reference.md
     ├── domain_syntax.md
@@ -118,7 +120,8 @@ c.unlink("res.partner", new_ids, confirm=True)   # irreversible!
 - v1.2 — Per-request batched confirmation, onboarding flow, license ✓
 - v1.3 — Competitive Use Restriction, expanded onboarding (mode-first, two-path API key, welcome-back, failure recovery) ✓
 - v1.4 — Renamed to "Odoo Sidekick by SHIFTcollective" ✓
-- v1.5 — Environment auto-detection (Claude.ai / Cowork / Claude Code), surface-aware onboarding, strengthened chat-history warnings, rotation reminder ✓ (current)
+- v1.5 — Environment auto-detection (Claude.ai / Cowork / Claude Code), surface-aware onboarding, strengthened chat-history warnings, rotation reminder ✓
+- v1.6 — Update checker (compares local VERSION against upstream GitHub, with 24h cache, release notes, graceful network-failure handling) ✓ (current)
 - v2.0 — Insight layers on the cache: manufacturing demand forecasting,
   accounting-trend detection (P&L deltas, AR aging shifts, vendor
   concentration), sales/CRM insights (cohort analysis, deal velocity).

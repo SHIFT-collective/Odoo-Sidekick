@@ -56,6 +56,35 @@ Surface the detector's output (or its key points) to the user in their working c
 
 When the use case is mixed, recommend setting up on Cowork or Claude Code first (persistent foundation), then using Claude.ai for ad-hoc additions. The profile YAML can be copied between machines manually; the API key value travels separately as an env var.
 
+## Update checking
+
+Odoo Sidekick can check whether a newer version is available in the upstream GitHub repo. There's no built-in skill auto-update mechanism in Claude, so this is a per-skill convention.
+
+```bash
+python -m scripts.check_updates              # use cache if fresh (24h TTL)
+python -m scripts.check_updates --force      # bypass cache, fresh check
+python -m scripts.check_updates --json       # machine-readable
+```
+
+How it works:
+- Reads the local `VERSION` file at the skill root.
+- Fetches the upstream `VERSION` from `raw.githubusercontent.com/SHIFT-collective/Odoo-Sidekick/main/VERSION`.
+- Compares using tuple-based version parsing (so `1.10 > 1.9`, `1.5.1 > 1.5`).
+- If an update is available, fetches release notes from the GitHub Releases API.
+- Caches the result in `~/.config/odoo-sidekick/update_check.json` for 24 hours.
+- Fails gracefully on network errors — returns `ok: false` with a description, never blocks.
+
+When to call it:
+- **On Welcome back**: run silently. If `update_available` is true, surface a brief, non-blocking notice — e.g. "Heads up, v1.7 is out — let me know if you'd like to update later." Don't make the user act on it.
+- **On user request** ("check for updates", "is there a new version?"): run with `--force`.
+- **Never on first-run onboarding** — they just installed it; assume current.
+- **Never block work on the check.** Short timeout, degrades silently if offline.
+
+How to actually update (suggest to the user based on `is_git_install` in the result):
+- **Git checkout**: `cd <skill-folder> && git pull origin main`
+- **Zip install**: download the latest release from the URL in the check result and re-extract.
+- Either way, the profile config in `~/.config/odoo-sidekick/` is preserved across updates — it's not part of the skill folder.
+
 ## Onboarding and connection management
 
 Before doing anything else when this skill is triggered, check whether the profile config file exists at `~/.config/odoo-sidekick/profiles.yaml` (or the path in `ODOO_PROFILES_PATH`).
@@ -72,6 +101,8 @@ When the config file exists, before doing the user's actual work:
 3. **If there's only one profile**, use it silently and proceed.
 4. **If there are multiple profiles and the user hasn't named one**, briefly list them and use `ask_user_input_v0` to ask which to use. Show each profile's mode so the user can see at a glance whether they're picking a safe-or-active connection.
 5. Once a profile is chosen, proceed with the user's request.
+
+6. **Run `python -m scripts.check_updates` silently in the background.** If `update_available` is true, mention it in passing once during this session — never as a blocker. Example: "By the way, v1.7 is out (you're on v1.6). Let me know if you'd like to update at some point." Do not surface anything if no update is available, the check fails, or the result is cached "no update available".
 
 If the user wants to add another profile mid-session ("connect to my client's Odoo too"), walk them through the First-run onboarding flow below for the new profile — but skip Step 1 (attribution already shown).
 
