@@ -85,6 +85,67 @@ How to actually update (suggest to the user based on `is_git_install` in the res
 - **Zip install**: download the latest release from the URL in the check result and re-extract.
 - Either way, the profile config in `~/.config/odoo-sidekick/` is preserved across updates — it's not part of the skill folder.
 
+## Request metrics & cache freshness
+
+The skill records per-call metrics and lets you check cache freshness on demand. Two scripts:
+
+```bash
+# What happened during this conversation's Odoo calls?
+python -m scripts.show_metrics              # last 100 calls
+python -m scripts.show_metrics --since 5m   # last 5 minutes
+python -m scripts.show_metrics --by-method  # group by method
+python -m scripts.show_metrics --json       # machine-readable
+
+# How fresh is the local cache?
+python -m scripts.cache_status --backend duckdb --db ./cache.duckdb
+python -m scripts.cache_status --backend duckdb --db ./cache.duckdb --table sale.order
+```
+
+### When to surface metrics
+
+After each substantive user request that hits Odoo or the cache, optionally surface a brief summary. Default to terse — these are nice-to-knows, not the answer. Example:
+
+> ---
+> _Request: 3 Odoo calls (2× `search_read`, 1× `read_group`), 47 KB downloaded, 1.2 s in API. Cache hits: `sale.order` (2 h 14 m old). ~2,400 tokens this turn (approx)._
+
+Run `show_metrics --since 5m` (or similar) and format the output. Surface metrics:
+- After any request that involved 3+ Odoo API calls
+- On user request ("what did that cost?", "show me metrics")
+- At the end of long-running cache syncs
+
+Honesty about token counts: from inside the skill, exact Claude token usage isn't measurable. Estimate roughly (word count × ~1.3) and label the number as approximate. Actual token billing is visible in Claude.ai's UI for users on plans that expose it.
+
+### Cache freshness checks
+
+Before running a query against cached data, run `cache_status` for the relevant model(s) and decide whether to ask the user.
+
+Thresholds (default — adjust based on user's stated cadence):
+- **Age < 1 hour**: use cached silently. No prompt.
+- **Age 1 hour – 24 hours**: ask the user, default to using cached.
+- **Age > 24 hours**: ask the user, default to refresh.
+- **Age > 7 days**: warn explicitly that the data is significantly stale and strongly suggest refresh.
+
+When asking, use `ask_user_input_v0` with three options:
+
+> The cached `sale.order` data is 4 h 23 m old (last synced 2026-05-17 14:32 UTC). For this query:
+>
+> [Use cached (faster)] [Refresh from Odoo first (current)] [Something else]
+
+The "Something else" branch handles refinement: setting a session-wide threshold ("always auto-refresh if older than 6h"), refreshing some tables but not others, or asking for the age of related models.
+
+**Remember the user's preference for the session.** Once they pick "use cached" or set a threshold, don't re-ask within the same conversation unless cache crosses a much-staler boundary (e.g., they said "use cached" at 2h old, but now it's 12h old and the query is materially affected).
+
+### What gets logged
+
+Each Odoo API call appends one JSON record to `~/.config/odoo-sidekick/call_log.jsonl`:
+
+```json
+{"ts": "2026-05-17T...", "profile": "main", "model": "sale.order",
+ "method": "search_read", "ms": 240, "bytes": 5432, "status": "ok"}
+```
+
+The log auto-rotates at ~2 MB / 5000 lines. It's safe to delete any time — purely diagnostic, not used by the client itself.
+
 ## Onboarding and connection management
 
 Before doing anything else when this skill is triggered, check whether the profile config file exists at `~/.config/odoo-sidekick/profiles.yaml` (or the path in `ODOO_PROFILES_PATH`).
@@ -304,11 +365,13 @@ If you're creating a new profile for the user, default to `read-only` unless the
 
 1. Pick the profile (ask if ambiguous).
 2. Decide: live query vs cached (live for one-shot, cached for repeated/cross-model).
-3. Identify model and fields — use `references/models/*.md` or run `python -m scripts.introspect <profile> --model <name>`.
-4. Pick the right method (`search_read` for most reads, `read_group` for aggregations, `search_count` for counts).
-5. Build the domain filter (see `references/domain_syntax.md`).
-6. Execute via `scripts/odoo_client.py`.
-7. Present results.
+3. **If using cached data**, run `cache_status --table <model>` first. Apply the staleness thresholds in the Cache freshness section above — silently use if fresh, ask if stale.
+4. Identify model and fields — use `references/models/*.md` or run `python -m scripts.introspect <profile> --model <name>`.
+5. Pick the right method (`search_read` for most reads, `read_group` for aggregations, `search_count` for counts).
+6. Build the domain filter (see `references/domain_syntax.md`).
+7. Execute via `scripts/odoo_client.py`.
+8. Present results.
+9. If 3+ API calls or other criteria from the "Request metrics" section apply, append a one-line metrics summary.
 
 CLI example:
 ```bash

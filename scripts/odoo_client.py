@@ -280,6 +280,49 @@ def _describe_impact(method: str, args: dict[str, Any]) -> str:
     return f"Calls {method} — non-read method, treated as write"
 
 
+# -- Call log (append-only JSONL for per-request metrics) ---------------------
+#
+# Each Odoo API call appends one line to ~/.config/odoo-sidekick/call_log.jsonl.
+# Format: {"ts": ISO-8601, "profile": str, "model": str, "method": str,
+#          "ms": int, "bytes": int, "status": "ok"|"ok_empty"|"http_<code>"|"network_error"}
+#
+# Failure to write is silently ignored — metrics are nice-to-have, not load-bearing.
+# The log is read by scripts/show_metrics.py.
+
+_CALL_LOG_PATH = Path.home() / ".config" / "odoo-sidekick" / "call_log.jsonl"
+_CALL_LOG_MAX_LINES = 5000  # rotate when exceeded
+
+
+def _log_call(profile: str, model: str, method: str, *,
+              ms: int, bytes_received: int, status: str) -> None:
+    """Append one metric record to the call log. Silent on any failure."""
+    try:
+        from datetime import datetime, timezone
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "profile": profile,
+            "model": model,
+            "method": method,
+            "ms": ms,
+            "bytes": bytes_received,
+            "status": status,
+        }
+        _CALL_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # Rotate if needed (cheap line count, only when file gets large)
+        if _CALL_LOG_PATH.exists() and _CALL_LOG_PATH.stat().st_size > 2_000_000:
+            try:
+                lines = _CALL_LOG_PATH.read_text().splitlines()
+                if len(lines) > _CALL_LOG_MAX_LINES:
+                    keep = lines[-(_CALL_LOG_MAX_LINES // 2):]
+                    _CALL_LOG_PATH.write_text("\n".join(keep) + "\n")
+            except OSError:
+                pass
+        with _CALL_LOG_PATH.open("a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:  # noqa: BLE001 — never let logging break a real call
+        pass
+
+
 # -- The client ----------------------------------------------------------------
 
 @dataclass
@@ -499,25 +542,43 @@ class OdooClient:
         headers = {
             "Authorization": f"bearer {self.profile.api_key}",
             "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "odoo-sidekick/1.6 (claude-skill)",
+            "User-Agent": "odoo-sidekick/1.7 (claude-skill)",
         }
         if self.profile.database:
             headers["X-Odoo-Database"] = self.profile.database
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        import time as _time  # local import to keep top-level imports tidy
+        start = _time.monotonic()
+        bytes_received = 0
+        status = "ok"
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read()
+                bytes_received = len(raw)
                 if not raw:
+                    _log_call(self.profile.name, model, method,
+                              ms=int((_time.monotonic() - start) * 1000),
+                              bytes_received=0, status="ok_empty")
                     return None
-                return json.loads(raw)
+                result = json.loads(raw)
+                _log_call(self.profile.name, model, method,
+                          ms=int((_time.monotonic() - start) * 1000),
+                          bytes_received=bytes_received, status="ok")
+                return result
         except urllib.error.HTTPError as e:
             err_body: dict[str, Any] | str
             try:
                 err_body = json.loads(e.read().decode("utf-8"))
             except Exception:  # noqa: BLE001
                 err_body = e.reason or "<no body>"
+            _log_call(self.profile.name, model, method,
+                      ms=int((_time.monotonic() - start) * 1000),
+                      bytes_received=bytes_received, status=f"http_{e.code}")
             raise OdooAPIError(e.code, err_body, url) from e
         except urllib.error.URLError as e:
+            _log_call(self.profile.name, model, method,
+                      ms=int((_time.monotonic() - start) * 1000),
+                      bytes_received=0, status="network_error")
             raise OdooClientError(f"Network error calling {url}: {e.reason}") from e
 
     # ---- convenience: pagination --------------------------------------------

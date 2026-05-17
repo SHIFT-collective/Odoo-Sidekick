@@ -48,11 +48,13 @@ odoo-sidekick/
 │   └── profiles.example.yaml         # Profile config template
 ├── VERSION                           # Single source of truth for the skill's version
 ├── scripts/
-│   ├── odoo_client.py                # JSON-2 client with mode + confirm gates
+│   ├── odoo_client.py                # JSON-2 client with mode + confirm gates + metrics
 │   ├── cache_sync.py                 # DuckDB/SQLite sync (always read-only)
+│   ├── cache_status.py               # Report cache freshness per model
 │   ├── introspect.py                 # Schema & model discovery (always read-only)
 │   ├── detect_env.py                 # Surface detection + use-case guidance
-│   └── check_updates.py              # Compare local VERSION against upstream GitHub
+│   ├── check_updates.py              # Compare local VERSION against upstream GitHub
+│   └── show_metrics.py               # Aggregate the per-call metrics log
 └── references/
     ├── api_reference.md
     ├── domain_syntax.md
@@ -115,16 +117,69 @@ c.unlink("res.partner", new_ids, confirm=True)   # irreversible!
 
 ## Roadmap
 
-- v1.0 — Read-only access + caching ✓
-- v1.1 — Optional read-write mode with confirmation gates ✓
-- v1.2 — Per-request batched confirmation, onboarding flow, license ✓
-- v1.3 — Competitive Use Restriction, expanded onboarding (mode-first, two-path API key, welcome-back, failure recovery) ✓
-- v1.4 — Renamed to "Odoo Sidekick by SHIFTcollective" ✓
-- v1.5 — Environment auto-detection (Claude.ai / Cowork / Claude Code), surface-aware onboarding, strengthened chat-history warnings, rotation reminder ✓
-- v1.6 — Update checker (compares local VERSION against upstream GitHub, with 24h cache, release notes, graceful network-failure handling) ✓ (current)
-- v2.0 — Insight layers on the cache: manufacturing demand forecasting,
-  accounting-trend detection (P&L deltas, AR aging shifts, vendor
-  concentration), sales/CRM insights (cohort analysis, deal velocity).
+### Released
+
+- **v1.0** — Read-only access + caching
+- **v1.1** — Optional read-write mode with confirmation gates
+- **v1.2** — Per-request batched confirmation, onboarding flow, license
+- **v1.3** — Competitive Use Restriction, expanded onboarding (mode-first, two-path API key, welcome-back, failure recovery)
+- **v1.4** — Renamed to "Odoo Sidekick by SHIFTcollective"
+- **v1.5** — Environment auto-detection (Claude.ai / Cowork / Claude Code), surface-aware onboarding, strengthened chat-history warnings, rotation reminder
+- **v1.6** — Update checker (compares local VERSION against upstream GitHub, with 24h cache, release notes, graceful network-failure handling)
+- **v1.7** — Per-call metrics logging (`show_metrics`), cache freshness reporting (`cache_status`), conversational staleness prompts before querying cached data ← **current**
+
+### Planned
+
+#### v1.8 — User context & role profiling
+
+Goal: ask the user a few questions during onboarding (or any time) to understand who they are and what they care about, then tailor everything downstream.
+
+Captured per-user:
+- **Primary role** — CEO, CFO, Operations Director, Sales Lead, Accountant, Production Manager, Marketing, etc.
+- **Company size context** — to scale thresholds (€10k "big revenue" for a 5-person shop ≠ €10k for a 500-person one).
+- **Primary goals** — revenue growth, cost control, operational efficiency, cash flow, customer retention, throughput.
+- **Pain points** — what frustrates them currently.
+- **Decision cadence** — daily, weekly, monthly?
+
+Stored at `~/.config/odoo-sidekick/user_profile.yaml`. Used to:
+- Set sensible defaults for queries (a CFO defaults to financial reports; an Ops Director to inventory and MRO).
+- Calibrate phrasing and depth (executive summary vs operational detail).
+- Pre-populate v1.9 routines.
+- Inform v2.0 insight surfacing.
+
+#### v1.9 — Scheduled routines & check-ins
+
+Goal: a registry of routines the user can opt into, role-aware, executable on schedule (Cowork/Code) or on demand (Claude.ai).
+
+Built-in routine templates, selected based on the v1.8 role:
+- **Daily standup (CEO/Founder)**: cash position, top 3 sales of yesterday, open MOs starting today, urgent leads, anything new requiring attention.
+- **Morning check-in (CFO)**: cash, AR aging delta vs yesterday, AP coming due this week, posted-but-unreconciled flags.
+- **Operations standup (Ops Director)**: open MOs, stock-out risks (orderpoints crossed), late shipments, production efficiency vs yesterday.
+- **Sales pipeline review (Sales Lead)**: pipeline value by stage, deals advancing, deals stalling >14 days, new leads this week, win rate trend.
+- **Weekly review (any role)**: cadence-appropriate summary of the last 7 days vs prior 7.
+
+Routines as YAML at `routines/<name>.yaml` — schedule, required role, queries, output template, optional alert thresholds. A `routine_runner.py` script executes them.
+
+On Cowork/Code: integrate with cron/launchd/Task Scheduler for unattended runs that produce an email or markdown summary. On Claude.ai: quick-launch buttons to run "today's standup".
+
+#### v2.0 — Insight layers with suggested actions
+
+Builds on the cache (v1.0), user context (v1.8), and routines (v1.9). Each insight is paired with a concrete suggested action.
+
+- **Manufacturing demand forecasting** — compares open MO demand + sales forecast against on-hand stock and lead times. Surface: "Component X is short by 240 units against the next 30 days. Suggested action: raise PO with vendor Y (lead time 7 d, last unit price €4.20)."
+- **Accounting trend detection** — P&L deltas vs prior period, AR aging shifts (movement between buckets), AP concentration, gross margin drift by product line. Surface: "AR > 60 days grew €18k this week, concentrated in two customers. Suggested action: payment reminder to Acme (€11k) and Beta (€7k)."
+- **Sales/CRM insights** — cohort analysis (new vs returning revenue), deal velocity by stage, win rate by source/segment, churn signals (customer revenue dropping). Suggested actions tied to specific accounts or deals.
+- **Anomaly detection** — alerts when metrics deviate from rolling baselines (significantly slow week, unusually large invoice, vendor charge that doesn't match a PO, inventory count discrepancy).
+- **Role-aware suggested-actions queue** — when the user opens the skill, a short list of "things worth your attention right now," filtered to their role.
+
+The v2.0 surface is meant to feel like a sidekick who's been watching the business overnight and has 3 things they think you should know about — not a dashboard that requires the user to go looking.
+
+### Beyond v2.0 (loose ideas)
+
+- Two-way write actions tied to insights ("send those payment reminders" → drafts emails or creates Odoo activities).
+- Multi-tenant aggregation (compare metrics across multiple client Odoos for consultancies, where allowed by license).
+- Integration with non-Odoo sources (bank feeds, payment processors, analytics tools).
+- A web-based skill admin UI for managing profiles, routines, and viewing metrics.
 
 ## About
 
