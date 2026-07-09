@@ -68,7 +68,9 @@ TYPE_MAP = {
     "html":      "TEXT",
     "selection": "TEXT",
     "reference": "TEXT",
-    "json":      "TEXT",
+    "json":      "TEXT",  # stored as serialized JSON
+    "properties": "TEXT",
+    "properties_definition": "TEXT",
 }
 
 
@@ -223,7 +225,12 @@ def coerce_value(field_type: str, value: Any) -> Any:
         if isinstance(value, list):
             return json.dumps(value)
         return json.dumps([])
-    # everything else: pass through
+    if field_type in ("json", "properties", "properties_definition"):
+        # Odoo returns real Python structures for these; DB drivers can't bind them
+        return value if isinstance(value, str) else json.dumps(value)
+    # everything else: pass through, but never hand a raw container to the driver
+    if isinstance(value, (list, dict)):
+        return json.dumps(value)
     return value
 
 
@@ -335,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     backend = open_backend(args.backend, args.db)
+    failed: list[str] = []
     try:
         ensure_sync_state(backend)
         for model in models:
@@ -343,11 +351,17 @@ def main(argv: list[str] | None = None) -> int:
                            incremental=args.incremental,
                            page_size=args.page_size,
                            include_binary=args.include_binary)
-            except OdooClientError as e:
-                print(f"[{model}] FAILED: {e}", file=sys.stderr)
-                # continue with next model rather than aborting the whole run
+            except Exception as e:  # noqa: BLE001 — API *or* backend errors:
+                # continue with the next model rather than aborting the whole run
+                print(f"[{model}] FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+                failed.append(model)
     finally:
         backend.close()
+    if failed:
+        # headless/CI callers rely on the exit code — a partial sync is a failure
+        print(f"{len(failed)}/{len(models)} model(s) failed: {', '.join(failed)}",
+              file=sys.stderr)
+        return 1
     return 0
 
 

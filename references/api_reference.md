@@ -66,10 +66,27 @@ HTTP 4xx or 5xx with a JSON error object:
 
 Common statuses:
 - `401` — bad/missing API key
-- `403` — user lacks access (check group membership)
+- `403` — user lacks access (check group membership); also private (`_`-prefixed) methods
 - `404` — wrong URL: typo in model name, method not exposed, or `/json/2` not enabled on this host
 - `400` — malformed domain, bad argument, etc.
+- `422` — argument-shape errors (e.g. `vals` instead of `vals_list`) and validation errors
 - `500` — server-side exception (look at `name` and `debug`)
+
+The `message` field almost always names the exact problem (unknown field,
+bad argument name, violated constraint). **Read it before retrying — a call
+that failed with a 4xx or a deterministic 500 (builtins.*, odoo.exceptions.*)
+will fail identically if re-issued unchanged.** The client surfaces `name`,
+`message`, a remediation hint, and the traceback tail on every error; see
+`references/odoo19_field_changes.md` for the recurring traps.
+
+### Retry semantics (what the client does for you)
+
+The client auto-retries **read methods only**, with exponential backoff +
+jitter, on transient statuses: 429/502/503/504, network errors, and 500s whose
+exception is not deterministic (e.g. psycopg2 serialization failures under
+load). Writes are never auto-retried — a gateway timeout can mask a committed
+transaction, so blind re-issue risks double-writes. Deterministic errors
+(bad field, validation) are never retried at all.
 
 ## Discovery
 
@@ -116,6 +133,14 @@ tuples; one2many/many2many as `[id, id, ...]` arrays.
 ```
 Returns: `[{...}, ...]`. Like `search_read` but with explicit ids.
 
+**Batch your reads.** `ids` takes a list — one call for 100 records, not 100
+calls for one record each (N+1 loops are the most common self-inflicted
+rate-limit). If you're about to loop `read` per id, pass the whole id list
+instead; if the ids come from a `search`, use `search_read` and skip the
+second round-trip entirely. Always pass an explicit `fields` list — omitting
+it fetches every field, including base64 binaries on models that have them
+(see the attachments note below).
+
 ### `read_group` — the key method for analytics
 ```json
 {
@@ -136,6 +161,12 @@ When `lazy: true` and you pass multiple `groupby` fields, only the first level
 is expanded — you'll get a `__domain` in each row to drill down. Use `lazy: false`
 for a flat full multi-level grouping.
 
+Note the argument-name asymmetry: `read_group` sorts with `orderby`, while
+`search`/`search_read` sort with `order`. Odoo 19 also exposes
+`formatted_read_group` (`{"domain": [...], "aggregates": ["amount_total:sum"],
+"groupby": ["state"]}`) — the native Odoo 19 aggregation entry point; both work
+over JSON-2.
+
 ### `fields_get`
 ```json
 {"allfields": ["name", "state"], "attributes": ["string", "type", "help"]}
@@ -150,6 +181,20 @@ Returns: `{"field_name": {"type": "char", "string": "Name", ...}, ...}`. Omit
 {"name": "Acme", "limit": 10, "operator": "ilike"}
 ```
 Returns: `[[id, "Display Name"], ...]`. Best for autocomplete-style lookups.
+
+## Attachments (context-window hazard)
+
+`ir.attachment` stores file bodies in `datas` as base64. A `read` that
+includes `datas` — or omits `fields` entirely — returns the whole file inline
+in the JSON response (observed: 9 MB+ single responses). Never pull that into
+an agent context. Use:
+
+```
+python -m scripts.get_attachment <profile> --id <id> --out <path>
+```
+
+which decodes to disk and prints only path + metadata. The CLI refuses
+inline-binary reads of ir.attachment unless `--allow-inline-binary` is passed.
 
 ## Rate limits
 

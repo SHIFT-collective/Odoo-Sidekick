@@ -8,6 +8,8 @@ not travel between surfaces. This script makes those constraints visible so
 onboarding and operational decisions can adapt.
 
 Surfaces:
+  - headless      : autonomous agent / scheduler run, no human at the keyboard
+                    (declared via ODOO_SIDEKICK_HEADLESS=1 — takes precedence)
   - claude.ai     : web/mobile chat, sandboxed Linux container, ephemeral fs
   - cowork        : desktop agent on user's real filesystem
   - claude_code   : CLI dev environment, local fs + shell
@@ -39,7 +41,11 @@ SANDBOX_SIGNALS = (
 
 def detect() -> dict:
     home = Path.home()
-    config_path = home / ".config" / "odoo-sidekick" / "profiles.yaml"
+    config_path = Path(
+        os.environ.get("ODOO_PROFILES_PATH")
+        or Path(os.environ.get("ODOO_SIDEKICK_STATE_DIR") or home / ".config" / "odoo-sidekick")
+        / "profiles.yaml"
+    ).expanduser()
 
     info: dict = {
         "environment": "unknown",
@@ -51,10 +57,43 @@ def detect() -> dict:
         "user_home": str(home),
         "config_path": str(config_path),
         "config_exists": config_path.exists(),
+        "headless": False,
+        "caller": os.environ.get("ODOO_SIDEKICK_CALLER") or None,
         "notes": [],
         "recommendations": [],
         "best_for": [],
     }
+
+    # Headless / autonomous-agent mode — declared explicitly, takes precedence
+    # over surface sniffing because the same host can serve both interactive
+    # and scheduled runs.
+    if os.environ.get("ODOO_SIDEKICK_HEADLESS", "").strip().lower() in ("1", "true", "yes"):
+        info["environment"] = "headless"
+        info["headless"] = True
+        info["notes"].extend([
+            "Headless run declared via ODOO_SIDEKICK_HEADLESS — no human is "
+            "assumed to be present at call time.",
+            "Skip onboarding, welcome-back chrome, and conversational prompts; "
+            "emit machine-parseable output (--json flags).",
+            "Chat-level write confirmation is unavailable here. Writes are gated "
+            "by the profile instead: confirm_cmd (external approval hook), "
+            "require_auth_ref (ticket reference per write), write_policy "
+            "(model/method allowlist).",
+        ])
+        info["recommendations"].extend([
+            "Set ODOO_SIDEKICK_CALLER=<agent-or-run-id> so the shared call log "
+            "is a usable audit trail.",
+            "Give each agent its own ODOO_SIDEKICK_STATE_DIR (or share one "
+            "deliberately, with caller set).",
+            "Run scripts/verify_profile.py at deploy time — client-side "
+            "read-only is not a security boundary.",
+        ])
+        info["best_for"].extend([
+            "Scheduled heartbeats and cron-driven reports.",
+            "Multi-agent orchestration platforms.",
+            "CI pipelines and unattended batch work.",
+        ])
+        return info
 
     # Claude.ai sandbox — look for the mounted skill / user-data paths.
     if any(Path(p).exists() for p in SANDBOX_SIGNALS):
@@ -143,6 +182,7 @@ def detect() -> dict:
 def print_human(info: dict) -> None:
     env = info["environment"]
     label = {
+        "headless":   "Headless (autonomous agent / scheduler, no human present)",
         "claude.ai":  "Claude.ai (web/mobile sandbox)",
         "cowork":     "Cowork (desktop agent on your real filesystem)",
         "claude_code":"Claude Code (local CLI)",

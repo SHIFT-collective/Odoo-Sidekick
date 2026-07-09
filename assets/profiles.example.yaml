@@ -3,40 +3,47 @@
 # Place this at: ~/.config/odoo-sidekick/profiles.yaml
 # Override the path with the ODOO_PROFILES_PATH env var.
 #
+# EDITING THIS FILE: prefer the profiles CLI over hand edits —
+#     python -m scripts.profiles set <name> mode read-write
+#     python -m scripts.profiles add <name> --url ... --api-key-env VAR
+# It validates the schema, takes a lock, and writes atomically. Hand edits
+# with sed/string surgery have corrupted real deployments. The CLI writes
+# canonical JSON (which is valid YAML and loads without PyYAML); files
+# authored as YAML, like this example, are also accepted.
+#
 # Notes:
 #   - api_key values support ${ENV_VAR} substitution so secrets stay out of
 #     this file. Set them in your shell or via a .env loader.
 #   - 'database' is only required on Odoo hosts that serve multiple databases
 #     under a single domain. Odoo Online single-DB instances can omit it.
-#   - 'mode' is either 'read-only' (default if omitted) or 'read-write'.
-#     Read-only profiles physically cannot perform writes — the Python client
-#     refuses before sending any HTTP request. Read-write profiles allow
-#     writes but each user request still requires explicit chat-level
-#     confirmation from the user, and the Python client requires confirm=True
-#     per call.
+#     Set it to 'auto' to resolve the name at runtime — recommended for SaaS
+#     staging instances, whose DB-name hash suffix changes on every rebuild.
+#   - 'mode' is either 'read-only' (default) or 'read-write'.
+#     IMPORTANT: mode is enforced by this skill's client, BEFORE any HTTP
+#     call — but it is client-side only. The API key itself keeps whatever
+#     rights its Odoo user has, and code that bypasses this client is not
+#     bound by it. For production, bind read-only profiles to a genuinely
+#     restricted Odoo user and prove it:
+#         python -m scripts.verify_profile <name>
 #   - 'default_context' is merged into every call. Useful for forcing a lang
 #     or timezone for consistent date/datetime interpretation.
-#   - Each api_key should belong to a dedicated Odoo user whose group
-#     memberships grant only the access you actually need:
-#       * read-only profiles → user with only read-side groups.
-#       * read-write profiles → user with the narrowest write groups required.
 
 default: main
 
 profiles:
-  # Primary read-only analytics profile. Cannot write under any circumstance.
+  # Primary read-only analytics profile.
   main:
     url: https://your-instance.odoo.com
     api_key: ${ODOO_MAIN_API_KEY}
     mode: read-only            # default; shown here for clarity
-    # database: your_database  # uncomment only if the host serves multiple DBs
+    # database: auto           # uncomment on multi-DB hosts / rebuilt SaaS stagings
     default_context:
       lang: en_US
       tz: UTC
 
   # Example of a profile that CAN write. Use sparingly — the API key here
   # should be bound to an Odoo user with the narrowest possible group set.
-  # Even with this profile, every write requires --confirm at the CLI / 
+  # Even with this profile, every write requires --confirm at the CLI /
   # confirm=True in code / explicit user confirmation in chat.
   main_rw:
     url: https://your-instance.odoo.com
@@ -45,6 +52,30 @@ profiles:
     default_context:
       lang: en_US
       tz: UTC
+
+  # A narrowly-scoped write profile for autonomous/headless use: writes are
+  # bounded to specific model+method pairs, every write must carry an
+  # authorization reference, and an external hook gets a veto.
+  ops_agent:
+    url: https://your-instance.odoo.com
+    api_key: ${ODOO_OPS_API_KEY}
+    mode: read-write
+    # Only these writes are ever attempted; everything else is refused
+    # client-side. deny_models wins over allow.
+    write_policy:
+      allow:
+        - model: sale.order
+          methods: [write, message_post]
+        - model: res.partner
+          methods: ["*"]
+      deny_models: [account.move, res.users, ir.model]
+    # Every write must carry --auth-ref / auth_ref=... / ODOO_SIDEKICK_AUTH_REF
+    # (e.g. a ticket or approval id). It is recorded in the call log.
+    require_auth_ref: true
+    # Optional headless confirmation hook: runs before every write with the
+    # JSON preview on stdin; non-zero exit refuses the write. This replaces
+    # chat-level confirmation where no human is present.
+    # confirm_cmd: "/opt/approvals/check-odoo-write"
 
   # Add additional profiles below for other Odoo instances (e.g. client
   # tenants, staging environments). Default new profiles to read-only.

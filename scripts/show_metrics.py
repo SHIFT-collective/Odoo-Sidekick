@@ -1,8 +1,12 @@
 """
 Summarize Odoo API call metrics from the per-call log.
 
-The log is at ~/.config/odoo-sidekick/call_log.jsonl, one JSON record per
-HTTP call. This script aggregates it into useful summaries.
+The log is at <state_dir>/call_log.jsonl (default ~/.config/odoo-sidekick/,
+override with ODOO_SIDEKICK_STATE_DIR), one JSON record per HTTP call, plus
+datestamped call_log-*.jsonl archives from rotation. This script aggregates
+current log + archives into useful summaries. Records may carry `caller`
+(from ODOO_SIDEKICK_CALLER) and `auth_ref` — surfaced here for auditing
+multi-agent hosts.
 
 Usage:
     python -m scripts.show_metrics                    # last 100 calls
@@ -13,6 +17,7 @@ Usage:
     python -m scripts.show_metrics --since 2026-05-15T10:00:00
     python -m scripts.show_metrics --by-method        # group by method
     python -m scripts.show_metrics --by-model         # group by model
+    python -m scripts.show_metrics --by-caller        # group by caller (audit)
     python -m scripts.show_metrics --json             # machine-readable
 """
 from __future__ import annotations
@@ -21,13 +26,15 @@ import argparse
 import json
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
 
-
-LOG_PATH = Path.home() / ".config" / "odoo-sidekick" / "call_log.jsonl"
+try:
+    from .odoo_client import state_dir, READ_METHODS
+except ImportError:  # pragma: no cover
+    sys.path.insert(0, str(Path(__file__).parent))
+    from odoo_client import state_dir, READ_METHODS  # type: ignore
 
 
 def _parse_since(s: str) -> datetime:
@@ -42,22 +49,29 @@ def _parse_since(s: str) -> datetime:
             "d": timedelta(days=n),
         }[unit]
         return datetime.now(timezone.utc) - delta
-    # ISO timestamp
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    # ISO timestamp — assume UTC when no offset is given (log records are aware)
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _read_records() -> list[dict]:
-    if not LOG_PATH.exists():
-        return []
+    """Read archives (chronological by datestamped name) then the live log."""
+    log_dir = state_dir()
+    paths = sorted(log_dir.glob("call_log-*.jsonl")) + [log_dir / "call_log.jsonl"]
     records = []
-    for line in LOG_PATH.read_text().splitlines():
-        line = line.strip()
-        if not line:
+    for path in paths:
+        if not path.exists():
             continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     return records
 
 
@@ -86,7 +100,9 @@ def summarize(records: list[dict]) -> dict:
     first = _record_ts(records[0])
     last = _record_ts(records[-1])
     span_s = (last - first).total_seconds()
-    return {
+    by_caller = Counter(r["caller"] for r in records if r.get("caller"))
+    writes = [r for r in records if r["method"] not in READ_METHODS]
+    out = {
         "total_calls": len(records),
         "total_bytes": total_bytes,
         "total_ms": total_ms,
@@ -99,6 +115,13 @@ def summarize(records: list[dict]) -> dict:
         "by_profile": dict(by_profile.most_common()),
         "by_model": dict(by_model.most_common(20)),  # cap at 20 for readability
     }
+    if by_caller:
+        out["by_caller"] = dict(by_caller.most_common())
+    if writes:
+        out["write_calls"] = len(writes)
+        out["writes_with_auth_ref"] = sum(1 for r in writes if r.get("auth_ref"))
+        out["writes_without_auth_ref"] = sum(1 for r in writes if not r.get("auth_ref"))
+    return out
 
 
 def _fmt_bytes(n: int) -> str:
@@ -134,6 +157,14 @@ def print_human(summary: dict, group: str | None = None) -> None:
         print("By model:")
         for m, n in summary["by_model"].items():
             print(f"  {m:<30} {n}")
+    if group == "caller":
+        if summary.get("by_caller"):
+            print("By caller:")
+            for c, n in summary["by_caller"].items():
+                print(f"  {c:<30} {n}")
+        else:
+            print("No caller identities recorded (set ODOO_SIDEKICK_CALLER "
+                  "per agent to enable).")
     if group is None:
         if summary["errors"]:
             print()
@@ -142,6 +173,12 @@ def print_human(summary: dict, group: str | None = None) -> None:
                 print(f"  {s:<20} {n}")
         print()
         print(f"By profile:    {', '.join(f'{p}={n}' for p, n in summary['by_profile'].items())}")
+        if summary.get("by_caller"):
+            print(f"By caller:     {', '.join(f'{c}={n}' for c, n in summary['by_caller'].items())}")
+        if summary.get("write_calls"):
+            print(f"Writes:        {summary['write_calls']} "
+                  f"({summary['writes_with_auth_ref']} with auth_ref, "
+                  f"{summary['writes_without_auth_ref']} without)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -150,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--last", type=int, default=None, help="Last N calls")
     p.add_argument("--by-method", action="store_true")
     p.add_argument("--by-model", action="store_true")
+    p.add_argument("--by-caller", action="store_true",
+                   help="Group by caller identity (ODOO_SIDEKICK_CALLER)")
     p.add_argument("--json", action="store_true", help="Machine-readable output")
     args = p.parse_args(argv)
 
@@ -163,7 +202,10 @@ def main(argv: list[str] | None = None) -> int:
         json.dump(summary, sys.stdout, indent=2, default=str)
         sys.stdout.write("\n")
     else:
-        group = "method" if args.by_method else ("model" if args.by_model else None)
+        group = ("method" if args.by_method
+                 else "model" if args.by_model
+                 else "caller" if args.by_caller
+                 else None)
         print_human(summary, group=group)
     return 0
 
