@@ -100,3 +100,19 @@ client.read_group("sale.order",
   contact. Filter explicitly when needed.
 - **Inactive partners**: archived contacts default to hidden. Pass
   `context={"active_test": False}` to include them.
+
+## Chatter (message_post) — applies to every chatter-enabled model
+
+Posting a note or message from the API:
+
+```json
+{"ids": [42], "body": "<p>Approved per KIN-7902</p>", "body_is_html": true}
+```
+
+- **Always pass `"body_is_html": true` when the body contains markup.**
+  Without it, Odoo 19 escapes the HTML and posts literal `&lt;p&gt;` text —
+  a human has to delete the mangled posts by hand.
+- `message_post` is a write method: it needs a read-write profile and
+  `--confirm` / `confirm=True` like any other write.
+- Reading a record's chatter: `search_read` on `mail.message` with
+  `[["model", "=", "res.partner"], ["res_id", "=", 42]]`.

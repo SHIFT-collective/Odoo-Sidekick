@@ -12,18 +12,27 @@ read-only; supports opt-in writes with explicit per-request user confirmation.
    - DuckDB (only if you want the DuckDB cache backend):
      `pip install duckdb`
    - SQLite is in the stdlib — no install.
-3. Create your profile config at `~/.config/odoo-sidekick/profiles.yaml`
-   based on `assets/profiles.example.yaml`. **All profiles default to
-   read-only.** Set `mode: read-write` on a profile only when you genuinely
-   need writes.
-4. Set your API key env var(s):
+3. Run the self-test — it verifies the install is complete before anything
+   else has a chance to fail confusingly:
+   `python -m scripts.selftest`
+4. Create your profile config at `~/.config/odoo-sidekick/profiles.yaml` —
+   either based on `assets/profiles.example.yaml`, or with the CLI:
+   `python -m scripts.profiles add main --url https://yourco.odoo.com --api-key-env ODOO_MAIN_API_KEY`
+   **All profiles default to read-only.** Set `mode: read-write` on a profile
+   only when you genuinely need writes.
+5. Set your API key env var(s):
    `export ODOO_MAIN_API_KEY=...`
-5. (Optional) Check what environment you're in:
+6. (Optional) Check what environment you're in:
    `python -m scripts.detect_env`
    The skill recognizes Claude.ai (sandboxed/ephemeral), Cowork and Claude
-   Code (local/persistent) and surfaces use-case guidance for each.
-6. Test connectivity:
-   `python -m scripts.introspect main --list-models --pattern sale`
+   Code (local/persistent), plus a declared headless mode for autonomous
+   agents, and surfaces use-case guidance for each.
+7. Test connectivity and credential alignment:
+   `python -m scripts.selftest --profile main`
+   `python -m scripts.verify_profile main`
+   The second command asks Odoo what your API key can actually do — a
+   read-only profile holding a write-capable key gets flagged loudly,
+   because the profile mode alone is client-side, not a security boundary.
 
 ## Which Claude surface should I use this from?
 
@@ -48,15 +57,20 @@ odoo-sidekick/
 │   └── profiles.example.yaml         # Profile config template
 ├── VERSION                           # Single source of truth for the skill's version
 ├── scripts/
-│   ├── odoo_client.py                # JSON-2 client with mode + confirm gates + metrics
+│   ├── odoo_client.py                # JSON-2 client: mode/policy/confirm gates, retries, error hints, audit log
+│   ├── profiles.py                   # Safe profile editing: validated, locked, atomic
+│   ├── verify_profile.py             # Prove what a credential can do server-side
+│   ├── selftest.py                   # Install/config/env sanity check — run first
+│   ├── introspect.py                 # Schema & model discovery incl. fuzzy --find
+│   ├── get_attachment.py             # Download attachments to disk (never inline)
 │   ├── cache_sync.py                 # DuckDB/SQLite sync (always read-only)
 │   ├── cache_status.py               # Report cache freshness per model
-│   ├── introspect.py                 # Schema & model discovery (always read-only)
-│   ├── detect_env.py                 # Surface detection + use-case guidance
+│   ├── detect_env.py                 # Surface detection (incl. headless) + guidance
 │   ├── check_updates.py              # Compare local VERSION against upstream GitHub
-│   └── show_metrics.py               # Aggregate the per-call metrics log
+│   └── show_metrics.py               # Aggregate the per-call metrics/audit log
 └── references/
     ├── api_reference.md
+    ├── odoo19_field_changes.md       # Odoo 19 renames + JSON-2 traps (check before retrying!)
     ├── domain_syntax.md
     ├── analytics_patterns.md
     ├── caching_strategy.md
@@ -71,24 +85,36 @@ odoo-sidekick/
 
 ## Safety model
 
-Three independent gates protect against unintended writes:
+Layered gates protect against unintended writes:
 
-### 1. Profile mode (mechanical)
+### 0. The credential (the only real security boundary)
+Everything below is enforced client-side, which binds only code that goes
+through this client. The API key keeps whatever rights its Odoo user has.
+Bind read-only profiles to genuinely restricted Odoo users, and prove the
+alignment with `python -m scripts.verify_profile <name>` — it asks Odoo
+directly (`has_access`, never mutates) and exits 2 with remediation steps
+when a "read-only" profile holds a write-capable key.
+
+### 1. Profile mode (mechanical, client-side)
 Every profile has `mode: read-only` (default) or `mode: read-write`. The
-Python client checks this before any HTTP request. A read-only profile cannot
-write under any circumstance — even with `confirm=True`, even with code that
-tries to bypass the bound method shortcuts.
+Python client checks this before any HTTP request and refuses writes on
+read-only profiles — even with `confirm=True`. Read-write profiles can be
+narrowed further with a `write_policy` (model/method allowlist plus hard-denied
+models) and `require_auth_ref` (every write must carry a ticket/approval
+reference, which is recorded in the call log).
 
 ### 2. Per-call confirmation (script safety)
 In read-write mode, all non-read methods require `confirm=True` (CLI: `--confirm`).
 Without it, the client raises `WriteNotConfirmed` carrying a preview of what
-would have been sent — a built-in dry-run.
+would have been sent. For a richer artifact, `--dry-run` fetches current values
+and prints a before→after diff per record without sending anything.
 
-### 3. Chat-level batched confirmation (per user request)
+### 3. Batched confirmation (per user request)
 Every user request that implies writes is presented as a consolidated summary
 in chat, with a poll-style prompt asking once. Authorization scope is the
-current user message only — no rolling forward across turns. See `SKILL.md`
-for the exact pattern.
+current user message only — no rolling forward across turns. In headless
+deployments (no human at call time) this layer is replaced by the profile's
+`confirm_cmd` approval hook. See `SKILL.md` for both patterns.
 
 ### Defense in depth
 Bind read-write profile API keys to Odoo users with the narrowest possible
@@ -108,11 +134,14 @@ try:
 except WriteNotConfirmed as e:
     print(e.preview)   # shows model, method, impact, args
 
-# Real call
-new_ids = c.create("res.partner", [{"name": "Test"}], confirm=True)
+# Real call — auth_ref ties the write to an approval in the audit log
+new_ids = c.create("res.partner", [{"name": "Test"}], confirm=True, auth_ref="TICKET-42")
 c.write("res.partner", new_ids, {"phone": "+34 ..."}, confirm=True)
 c.execute("sale.order", "action_confirm", ids=[123], confirm=True)
 c.unlink("res.partner", new_ids, confirm=True)   # irreversible!
+
+# Rich preview without sending anything: current values + before→after diff
+print(c.dry_run("res.partner", "write", {"ids": new_ids, "vals": {"phone": "+1 ..."}}))
 ```
 
 ## Roadmap
@@ -126,32 +155,39 @@ c.unlink("res.partner", new_ids, confirm=True)   # irreversible!
 - **v1.4** — Renamed to "Odoo Sidekick by SHIFTcollective"
 - **v1.5** — Environment auto-detection (Claude.ai / Cowork / Claude Code), surface-aware onboarding, strengthened chat-history warnings, rotation reminder
 - **v1.6** — Update checker (compares local VERSION against upstream GitHub, with 24h cache, release notes, graceful network-failure handling)
-- **v1.7** — Per-call metrics logging (`show_metrics`), cache freshness reporting (`cache_status`), conversational staleness prompts before querying cached data ← **current**
+- **v1.7** — Per-call metrics logging (`show_metrics`), cache freshness reporting (`cache_status`), conversational staleness prompts before querying cached data
+- **v1.8** — Reliability, audit & headless hardening (shaped by production feedback from a 24-day / 8,600-call multi-agent deployment) ← **current**
+  - Server error bodies surfaced with remediation hints on every failure; `--json-errors` for machine callers; bounded retry with backoff+jitter for transient read failures (never writes, never deterministic errors)
+  - Audit trail: `caller` (ODOO_SIDEKICK_CALLER) and `auth_ref` (`--auth-ref`) recorded per call; `require_auth_ref` profiles; `show_metrics --by-caller`; log rotation archives instead of truncating
+  - `verify_profile.py` proves credential capability server-side; `write_policy` model/method allowlists; `confirm_cmd` headless approval hook
+  - `profiles.py` CLI (validated, locked, atomic config edits; canonical JSON); `ODOO_SIDEKICK_STATE_DIR` for multi-agent hosts; `database: auto` (SaaS rebuild immunity)
+  - Rich `--dry-run` with per-record before→after diffs — the write preview IS the approval artifact
+  - `get_attachment.py` (downloads to disk — no more multi-MB base64 in context); `introspect --find` fuzzy model discovery; `selftest.py`; headless surface in `detect_env`; `references/odoo19_field_changes.md`
 
 ### Planned
 
-#### v1.8 — User context & role profiling
+#### v1.9 — User context & role profiling
 
 Goal: ask the user a few questions during onboarding (or any time) to understand who they are and what they care about, then tailor everything downstream.
 
 Captured per-user:
-- **Primary role** — CEO, CFO, Operations Director, Sales Lead, Accountant, Production Manager, Marketing, etc.
+- **Primary role** — CEO, CFO, Operations Director, Sales Lead, Accountant, Production Manager, Marketing, etc. The schema is persona-agnostic: `role: ops-agent` is as valid as `role: CFO`, because in agent deployments the "user" is an agent with a role.
 - **Company size context** — to scale thresholds (€10k "big revenue" for a 5-person shop ≠ €10k for a 500-person one).
 - **Primary goals** — revenue growth, cost control, operational efficiency, cash flow, customer retention, throughput.
 - **Pain points** — what frustrates them currently.
 - **Decision cadence** — daily, weekly, monthly?
 
-Stored at `~/.config/odoo-sidekick/user_profile.yaml`. Used to:
+Stored at `<state_dir>/user_profile.yaml`. Onboarding is skippable and pre-seedable from a file, so headless deployments never fight the interactive flow. Used to:
 - Set sensible defaults for queries (a CFO defaults to financial reports; an Ops Director to inventory and MRO).
 - Calibrate phrasing and depth (executive summary vs operational detail).
-- Pre-populate v1.9 routines.
-- Inform v2.0 insight surfacing.
+- Pre-populate v2.0 routines.
+- Inform v2.1 insight surfacing.
 
-#### v1.9 — Scheduled routines & check-ins
+#### v2.0 — Scheduled routines & check-ins
 
 Goal: a registry of routines the user can opt into, role-aware, executable on schedule (Cowork/Code) or on demand (Claude.ai).
 
-Built-in routine templates, selected based on the v1.8 role:
+Built-in routine templates, selected based on the v1.9 role:
 - **Daily standup (CEO/Founder)**: cash position, top 3 sales of yesterday, open MOs starting today, urgent leads, anything new requiring attention.
 - **Morning check-in (CFO)**: cash, AR aging delta vs yesterday, AP coming due this week, posted-but-unreconciled flags.
 - **Operations standup (Ops Director)**: open MOs, stock-out risks (orderpoints crossed), late shipments, production efficiency vs yesterday.
@@ -160,23 +196,25 @@ Built-in routine templates, selected based on the v1.8 role:
 
 Routines as YAML at `routines/<name>.yaml` — schedule, required role, queries, output template, optional alert thresholds. A `routine_runner.py` script executes them.
 
+Design commitment: routines are **plain CLI invocations + YAML definitions that any external scheduler can drive** — cron, CI, launchd, Task Scheduler, or an orchestration platform with its own scheduler. No built-in daemon. The valuable parts are the definitions (queries + thresholds + output template); alert thresholds ("tell me only when AR aging crosses X") are what let both humans and autonomous agents stop burning attention re-checking dashboards. Runners honor headless mode (`--json` output, exit codes signal whether thresholds fired).
+
 On Cowork/Code: integrate with cron/launchd/Task Scheduler for unattended runs that produce an email or markdown summary. On Claude.ai: quick-launch buttons to run "today's standup".
 
-#### v2.0 — Insight layers with suggested actions
+#### v2.1 — Insight layers with suggested actions
 
-Builds on the cache (v1.0), user context (v1.8), and routines (v1.9). Each insight is paired with a concrete suggested action.
+Builds on the cache (v1.0), the v1.8 reliability layer (retries + trustworthy error surfacing are prerequisites for trustworthy baselines), user context (v1.9), and routines (v2.0). Each insight is paired with a concrete suggested action.
 
 - **Manufacturing demand forecasting** — compares open MO demand + sales forecast against on-hand stock and lead times. Surface: "Component X is short by 240 units against the next 30 days. Suggested action: raise PO with vendor Y (lead time 7 d, last unit price €4.20)."
 - **Accounting trend detection** — P&L deltas vs prior period, AR aging shifts (movement between buckets), AP concentration, gross margin drift by product line. Surface: "AR > 60 days grew €18k this week, concentrated in two customers. Suggested action: payment reminder to Acme (€11k) and Beta (€7k)."
 - **Sales/CRM insights** — cohort analysis (new vs returning revenue), deal velocity by stage, win rate by source/segment, churn signals (customer revenue dropping). Suggested actions tied to specific accounts or deals.
 - **Anomaly detection** — alerts when metrics deviate from rolling baselines (significantly slow week, unusually large invoice, vendor charge that doesn't match a PO, inventory count discrepancy).
-- **Role-aware suggested-actions queue** — when the user opens the skill, a short list of "things worth your attention right now," filtered to their role.
+- **Role-aware suggested-actions queue** — when the user opens the skill, a short list of "things worth your attention right now," filtered to their role. Respects headless mode: emits JSON, not a briefing paragraph.
 
-The v2.0 surface is meant to feel like a sidekick who's been watching the business overnight and has 3 things they think you should know about — not a dashboard that requires the user to go looking.
+The v2.1 surface is meant to feel like a sidekick who's been watching the business overnight and has 3 things they think you should know about — not a dashboard that requires the user to go looking.
 
-### Beyond v2.0 (loose ideas)
+### Beyond v2.1 (loose ideas)
 
-- Two-way write actions tied to insights ("send those payment reminders" → drafts emails or creates Odoo activities).
+- Two-way write actions tied to insights ("send those payment reminders" → drafts emails or creates Odoo activities). These route through the same write-gate machinery as everything else — mode, write_policy, auth_ref, confirm_cmd — because an insight layer that can act is an agent, and inherits every safety question above.
 - Multi-tenant aggregation (compare metrics across multiple client Odoos for consultancies, where allowed by license).
 - Integration with non-Odoo sources (bank feeds, payment processors, analytics tools).
 - A web-based skill admin UI for managing profiles, routines, and viewing metrics.
