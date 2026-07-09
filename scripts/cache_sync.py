@@ -342,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     backend = open_backend(args.backend, args.db)
+    failed: list[str] = []
     try:
         ensure_sync_state(backend)
         for model in models:
@@ -353,8 +354,14 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as e:  # noqa: BLE001 — API *or* backend errors:
                 # continue with the next model rather than aborting the whole run
                 print(f"[{model}] FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+                failed.append(model)
     finally:
         backend.close()
+    if failed:
+        # headless/CI callers rely on the exit code — a partial sync is a failure
+        print(f"{len(failed)}/{len(models)} model(s) failed: {', '.join(failed)}",
+              file=sys.stderr)
+        return 1
     return 0
 
 

@@ -947,6 +947,15 @@ class OdooClient:
             if refusal:
                 raise WritePolicyViolation(f"Refusing to call {model}.{method}: {refusal}.")
 
+        # Merge default context BEFORE the confirmation gates so the preview
+        # and the confirm_cmd hook see the exact body that will be posted —
+        # context (allowed_company_ids, tracking flags, ...) can change a
+        # write's scope and side effects.
+        ctx = dict(self.profile.default_context)
+        ctx.update(args.get("context") or {})
+        if ctx:
+            args["context"] = ctx
+
         # Confirmation gate (dry-run) ------------------------------------------
         if not is_read and not confirm:
             preview = {
@@ -974,12 +983,6 @@ class OdooClient:
         # Headless confirmation hook ---------------------------------------------
         if not is_read and self.profile.confirm_cmd:
             self._run_confirm_cmd(model, method, args, auth_ref)
-
-        # Merge default context -------------------------------------------------
-        ctx = dict(self.profile.default_context)
-        ctx.update(args.get("context") or {})
-        if ctx:
-            args["context"] = ctx
 
         # Send (with bounded retry for transient read failures) -------------------
         url = f"{self.profile.url}/json/2/{model}/{method}"
