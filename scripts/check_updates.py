@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -66,7 +67,9 @@ def _skill_root() -> Path:
 
 
 def _cache_path() -> Path:
-    return Path.home() / ".config" / "odoo-sidekick" / "update_check.json"
+    override = os.environ.get("ODOO_SIDEKICK_STATE_DIR")
+    base = Path(override).expanduser() if override else Path.home() / ".config" / "odoo-sidekick"
+    return base / "update_check.json"
 
 
 # -- Local version ------------------------------------------------------------
