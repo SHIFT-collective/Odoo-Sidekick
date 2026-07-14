@@ -1,11 +1,11 @@
-# Odoo Sidekick — User Manual
+# Odoo Sidekick — Technical Manual
 
 *A Claude skill by SHIFTcollective, bridging Claude to Odoo 19 over the External JSON-2 API.*
 
 **Version covered:** 1.8
 **Last updated:** 2026-07-14
 
-This manual is a practical guide to using Odoo Sidekick well: setting it up, understanding its safety model, and getting the most out of reads, writes, caching, and automation. For the underlying agent instructions the skill runs on, see `SKILL.md`; for narrower technical references (domain syntax, model field lists, Odoo 19 schema quirks), see the `references/` directory this manual points to throughout.
+This is the in-depth technical reference: setting the skill up, understanding its safety model in full, and getting the most out of reads, writes, caching, and automation, aimed at admins, implementers, and technical/power users. **If you're a day-to-day Odoo user who just wants to get value out of this without the implementation details, read `quick-start-guide.md` instead** — it's six pages and covers everything you actually need. For the underlying agent instructions the skill runs on, see `SKILL.md`; for narrower technical references (domain syntax, model field lists, Odoo 19 schema quirks), see the `references/` directory this manual points to throughout.
 
 ## Contents
 
