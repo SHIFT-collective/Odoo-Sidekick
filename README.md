@@ -3,6 +3,11 @@
 A Claude skill for querying Odoo V19 via the External JSON-2 API. Defaults to
 read-only; supports opt-in writes with explicit per-request user confirmation.
 
+**New to the skill?** See [`user-manual.md`](user-manual.md) (also available as
+[`user-manual.pdf`](user-manual.pdf)) for a full walkthrough: setup, the safety
+model, everyday reads and writes, caching, headless/automation use, and a
+command reference. This README stays focused on install and architecture.
+
 ## Install
 
 1. Copy this folder into your skills directory (or package it into a `.skill` file).
