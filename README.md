@@ -3,10 +3,14 @@
 A Claude skill for querying Odoo V19 via the External JSON-2 API. Defaults to
 read-only; supports opt-in writes with explicit per-request user confirmation.
 
-**New to the skill?** See [`user-manual.md`](user-manual.md) (also available as
-[`user-manual.pdf`](user-manual.pdf)) for a full walkthrough: setup, the safety
-model, everyday reads and writes, caching, headless/automation use, and a
-command reference. This README stays focused on install and architecture.
+**Just want to use it day to day?** See [`quick-start-guide.md`](quick-start-guide.md)
+(also [`quick-start-guide.pdf`](quick-start-guide.pdf)) — a 6-page, non-technical
+guide to what to ask and how to get the most out of it, aimed at everyday Odoo users.
+
+**Setting it up, or need the full reference?** See [`technical-manual.md`](technical-manual.md)
+(also [`technical-manual.pdf`](technical-manual.pdf)) for the in-depth walkthrough:
+setup, the safety model, everyday reads and writes, caching, headless/automation
+use, and a command reference. This README stays focused on install and architecture.
 
 ## Install
 
@@ -57,6 +61,10 @@ time to see which surface you're in and what the implications are.
 odoo-sidekick/
 ├── SKILL.md                          # Entry point — read first
 ├── README.md                         # This file
+├── quick-start-guide.md               # 6-page, non-technical guide for everyday Odoo users
+├── quick-start-guide.pdf
+├── technical-manual.md                # Full technical manual: setup, safety model, reference
+├── technical-manual.pdf
 ├── LICENSE                           # Apache 2.0 + Commons Clause + Competitive Use Restriction
 ├── assets/
 │   └── profiles.example.yaml         # Profile config template
