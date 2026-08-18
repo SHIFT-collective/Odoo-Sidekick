@@ -8,9 +8,9 @@ single responses). This script decodes the payload straight to disk and
 prints only the path and metadata.
 
 Usage:
-    python -m scripts.get_attachment <profile> --id 12245
-    python -m scripts.get_attachment <profile> --id 12245 --out ./deck.pdf
-    python -m scripts.get_attachment <profile> --id 12245 --json
+    python3 -m scripts.get_attachment <profile> --id 12245
+    python3 -m scripts.get_attachment <profile> --id 12245 --out ./deck.pdf
+    python3 -m scripts.get_attachment <profile> --id 12245 --json
 
 The sha1 of the written file is checked against Odoo's stored checksum.
 """

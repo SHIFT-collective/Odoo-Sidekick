@@ -1,0 +1,46 @@
+# odoo-sidekick — user profile seed template (v1.9 user context & role profiling)
+#
+# Copy, edit, then load with:
+#     python3 -m scripts.user_profile seed --file user_profile.example.yaml
+#
+# This pre-seeds <state_dir>/user_profile.yaml so headless deployments never
+# fight the interactive tailoring flow. Interactive users don't need this
+# file — Claude captures the same answers conversationally and stores them
+# with `python3 -m scripts.user_profile set ...`.
+#
+# Every key is optional; set only what you know. The file holds preferences,
+# never credentials. See `python3 -m scripts.user_profile --help` for values.
+
+# Free-form and persona-agnostic: "CFO", "Operations Director", "ops-agent",
+# "kk-ops automation pipeline" are all valid. Agent-ish roles (agent, bot,
+# automation, ...) switch guidance to machine-consumer phrasing.
+role: ops-agent
+
+# A size bucket (solo, 2-10, 11-50, 51-200, 201-500, 500+) or a plain
+# employee count — counts are normalized to a bucket. Scales what "a notable
+# amount" means in guidance.
+company_size: 11-50
+
+# Known vocabulary unlocks focus hints: revenue-growth, cost-control,
+# operational-efficiency, cash-flow, customer-retention, throughput.
+# Free text is kept as-is.
+goals:
+  - throughput
+  - operational-efficiency
+
+# Free text — what currently frustrates this user/agent. Surfaced back in
+# guidance so answers can address them when relevant.
+pain_points:
+  - late component deliveries stall MOs
+
+# daily | weekly | monthly | quarterly | ad-hoc — sets the default
+# comparison window (daily -> vs yesterday, weekly -> vs prior 7 days, ...).
+decision_cadence: daily
+
+# Optional override: executive | balanced | operational.
+# When unset, derived from the role (a CFO gets executive summaries, a
+# production manager gets record-level detail).
+# detail_preference: operational
+
+# Optional preferred output language for reports and summaries.
+# language: en

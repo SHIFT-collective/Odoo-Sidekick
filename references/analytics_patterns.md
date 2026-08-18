@@ -190,7 +190,7 @@ that `read_group` can't express (e.g. "products with sales_velocity > 10 AND
 stock_on_hand < 5"), it's faster to sync those models into DuckDB and use SQL:
 
 ```bash
-python -m scripts.cache_sync <profile> \
+python3 -m scripts.cache_sync <profile> \
     --models sale.order.line,stock.quant,product.product \
     --backend duckdb --db ./cache.duckdb
 ```

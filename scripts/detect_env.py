@@ -13,12 +13,12 @@ Surfaces:
   - claude.ai     : web/mobile chat, sandboxed Linux container, ephemeral fs
   - cowork        : desktop agent on user's real filesystem
   - claude_code   : CLI dev environment, local fs + shell
-  - local         : running on a real machine but not via a recognizable Claude surface
-  - unknown       : couldn't determine
+  - local         : running on a real machine but not via a recognizable Claude
+                    surface (the catch-all — detection always resolves)
 
 Usage:
-    python -m scripts.detect_env             # human-readable
-    python -m scripts.detect_env --json      # machine-readable
+    python3 -m scripts.detect_env             # human-readable
+    python3 -m scripts.detect_env --json      # machine-readable
 """
 from __future__ import annotations
 
@@ -41,11 +41,13 @@ SANDBOX_SIGNALS = (
 
 def detect() -> dict:
     home = Path.home()
-    config_path = Path(
-        os.environ.get("ODOO_PROFILES_PATH")
-        or Path(os.environ.get("ODOO_SIDEKICK_STATE_DIR") or home / ".config" / "odoo-sidekick")
-        / "profiles.yaml"
+    state_dir = Path(
+        os.environ.get("ODOO_SIDEKICK_STATE_DIR") or home / ".config" / "odoo-sidekick"
     ).expanduser()
+    config_path = Path(
+        os.environ.get("ODOO_PROFILES_PATH") or state_dir / "profiles.yaml"
+    ).expanduser()
+    user_profile_path = state_dir / "user_profile.yaml"
 
     info: dict = {
         "environment": "unknown",
@@ -57,6 +59,8 @@ def detect() -> dict:
         "user_home": str(home),
         "config_path": str(config_path),
         "config_exists": config_path.exists(),
+        "user_profile_path": str(user_profile_path),
+        "user_profile_exists": user_profile_path.exists(),
         "headless": False,
         "caller": os.environ.get("ODOO_SIDEKICK_CALLER") or None,
         "notes": [],
@@ -87,6 +91,9 @@ def detect() -> dict:
             "deliberately, with caller set).",
             "Run scripts/verify_profile.py at deploy time — client-side "
             "read-only is not a security boundary.",
+            "Pre-seed user context with `python3 -m scripts.user_profile seed "
+            "--file <seed>` (see assets/user_profile.example.yaml) — the "
+            "tailoring questions never run headless.",
         ])
         info["best_for"].extend([
             "Scheduled heartbeats and cron-driven reports.",
@@ -199,6 +206,8 @@ def print_human(info: dict) -> None:
     print(f"Python:             {info['python_version']}")
     print(f"Config path:        {info['config_path']}")
     print(f"Config exists:      {'yes' if info['config_exists'] else 'no'}")
+    print(f"User profile:       "
+          f"{info['user_profile_path'] if info['user_profile_exists'] else 'none (tailoring not captured)'}")
 
     if info["notes"]:
         print("\nWhat this means:")

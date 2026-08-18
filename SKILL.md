@@ -1,6 +1,6 @@
 ---
 name: odoo-sidekick
-description: Query and (optionally) modify Odoo V19 data via the External JSON-2 API. Use this skill whenever the user asks to pull, analyze, summarize, audit, compare, visualize, create, update, or modify records in an Odoo database (sales, invoices, inventory, manufacturing orders, contacts, purchases, etc.) — including phrasings like "show me last quarter's sales", "who are our top customers", "AR aging report from Odoo", "MRP demand for next month", "audit our SKUs", "pull Odoo data into a spreadsheet", "create a contact", "tag these partners", "update the price on this product", or "post this invoice". Also use when the user wants to cache or mirror Odoo data into a local DuckDB or SQLite database for offline analysis. Profiles default to read-only; writes require a read-write profile AND explicit per-request confirmation — from the user in chat, or in headless deployments from the operator-configured approval machinery. Never write without an approved plan.
+description: Query and (optionally) modify Odoo V19 data via the External JSON-2 API. Use this skill whenever the user asks to pull, analyze, summarize, audit, compare, visualize, create, update, or modify records in an Odoo database (sales, invoices, inventory, manufacturing orders, contacts, purchases, etc.) — including phrasings like "show me last quarter's sales", "who are our top customers", "AR aging report from Odoo", "MRP demand for next month", "audit our SKUs", "pull Odoo data into a spreadsheet", "create a contact", "tag these partners", "update the price on this product", or "post this invoice". Also use when the user wants to cache or mirror Odoo data into a local DuckDB or SQLite database for offline analysis. Profiles default to read-only; writes require a read-write profile AND explicit per-request confirmation — from the user in chat, or in headless deployments from the operator-configured approval machinery. Never write without an approved plan. Tailors output to the user's role, goals, and cadence.
 ---
 
 # Odoo Sidekick by SHIFTcollective
@@ -12,12 +12,13 @@ to read-only; supports opt-in writes with per-request user confirmation.
 ## What this skill does
 
 - Queries Odoo V19 instances over the JSON-2 API using a whitelist of read methods.
-- Supports **multiple named instance profiles** via a single config file, edited safely via `python -m scripts.profiles` (validated, locked, atomic).
+- Supports **multiple named instance profiles** via a single config file, edited safely via `python3 -m scripts.profiles` (validated, locked, atomic).
 - Each profile has a `mode`: `read-only` (default) or `read-write`. Read-only profiles cannot perform writes **through this client** — and `scripts/verify_profile.py` proves whether the credential itself is read-only server-side, which is the boundary that actually matters.
 - In `read-write` mode, supports `create`, `write`, `unlink`, `copy`, and arbitrary action/button methods — but **every user request that implies writes requires explicit consolidated confirmation from the user** (or, in headless mode, the profile's configured approval machinery).
 - Optional per-profile write hardening: `write_policy` model/method allowlists, `require_auth_ref` (every write carries a ticket/approval reference into the audit log), and `confirm_cmd` (external approval hook).
 - Retries transient read failures automatically (backoff + jitter); surfaces the server's actual error with a remediation hint on every failure, so a failing call is never re-issued blind.
 - Optionally **caches** any model into a local DuckDB or SQLite database for fast repeated analysis.
+- Learns **who the user is** — role, company size, goals, pain points, decision cadence — via a few skippable questions (or a headless seed file), stores it at `<state_dir>/user_profile.yaml`, and turns it into concrete defaults with `python3 -m scripts.user_profile guidance` (which reports to lead with, phrasing depth, what counts as a notable amount, comparison windows). See **User context & role profiling**.
 - Provides reference docs for the most-used Odoo models (sales, accounting, inventory, manufacturing, partners, purchase) plus a catalogue of Odoo 19 renames and JSON-2 quirks (`references/odoo19_field_changes.md`).
 
 ## When to trigger
@@ -29,7 +30,7 @@ Trigger whenever the user wants to do anything with data in Odoo — reads, anal
 Odoo Sidekick can run from three different Claude surfaces — plus headless, with no human present at all — and they have very different runtime semantics. The same skill code works everywhere, but **profile configs and cached databases do not travel between surfaces.** Before doing anything else on the first turn of a conversation, run the environment detector so the user knows what's possible here:
 
 ```bash
-python -m scripts.detect_env          # add --json when a machine is reading
+python3 -m scripts.detect_env          # add --json when a machine is reading
 ```
 
 If the detector reports `headless`, skip every conversational flow in this file and follow **Headless / autonomous operation** below instead. Otherwise, surface the detector's output (or its key points) to the user in their working chat language. The detector reports the surface, whether the filesystem is sandboxed, where the config file lives, whether config persists, and surface-specific best-for / recommendations.
@@ -49,7 +50,7 @@ The onboarding and confirmation flows below name Claude.ai-sandbox tools (`ask_u
 
 ### Cross-surface invariants
 
-- **Skills travel; profiles do not.** Installing the skill once makes it available on every surface, but a profile created in one surface does not transfer to another. A user who sets up the skill in Claude.ai and then wants to use it from Cowork needs to redo profile setup on their local machine.
+- **Skills travel; profiles do not.** Installing the skill once makes it available on every surface, but a profile created in one surface does not transfer to another. A user who sets up the skill in Claude.ai and then wants to use it from Cowork needs to redo profile setup on their local machine. This applies to the **user profile** (`user_profile.yaml`) exactly as it does to connection profiles — both live in the state dir.
 - **API keys pasted in chat persist forever.** Conversation history is long-lived regardless of surface, including across sessions, devices, and exports. This makes Path A (.env download) the right choice even in ephemeral sandboxes — the sandbox is ephemeral, the chat isn't.
 - **Dependencies don't auto-install on local surfaces.** On Cowork and Claude Code, the user needs Python 3 plus PyYAML (optional, for YAML profiles vs JSON) and DuckDB (optional, for the cache backend). On Claude.ai the sandbox usually has these or installs them automatically; on local surfaces the user owns this.
 
@@ -68,9 +69,9 @@ When the use case is mixed, recommend setting up on Cowork or Claude Code first 
 Odoo Sidekick can check whether a newer version is available in the upstream GitHub repo. There's no built-in skill auto-update mechanism in Claude, so this is a per-skill convention.
 
 ```bash
-python -m scripts.check_updates              # use cache if fresh (24h TTL)
-python -m scripts.check_updates --force      # bypass cache, fresh check
-python -m scripts.check_updates --json       # machine-readable
+python3 -m scripts.check_updates              # use cache if fresh (24h TTL)
+python3 -m scripts.check_updates --force      # bypass cache, fresh check
+python3 -m scripts.check_updates --json       # machine-readable
 ```
 
 How it works:
@@ -78,7 +79,7 @@ How it works:
 - Fetches the upstream `VERSION` from `raw.githubusercontent.com/SHIFT-collective/Odoo-Sidekick/main/VERSION`.
 - Compares using tuple-based version parsing (so `1.10 > 1.9`, `1.5.1 > 1.5`).
 - If an update is available, fetches release notes from the GitHub Releases API.
-- Caches the result in `~/.config/odoo-sidekick/update_check.json` for 24 hours.
+- Caches the result in `<state_dir>/update_check.json` for 24 hours.
 - Fails gracefully on network errors — returns `ok: false` with a description, never blocks.
 
 When to call it:
@@ -98,14 +99,14 @@ The skill records per-call metrics (to `<state_dir>/call_log.jsonl`; the state d
 
 ```bash
 # What happened during this conversation's Odoo calls?
-python -m scripts.show_metrics              # last 100 calls
-python -m scripts.show_metrics --since 5m   # last 5 minutes
-python -m scripts.show_metrics --by-method  # group by method
-python -m scripts.show_metrics --json       # machine-readable
+python3 -m scripts.show_metrics              # last 100 calls
+python3 -m scripts.show_metrics --since 5m   # last 5 minutes
+python3 -m scripts.show_metrics --by-method  # group by method
+python3 -m scripts.show_metrics --json       # machine-readable
 
 # How fresh is the local cache?
-python -m scripts.cache_status --backend duckdb --db ./cache.duckdb
-python -m scripts.cache_status --backend duckdb --db ./cache.duckdb --table sale.order
+python3 -m scripts.cache_status --backend duckdb --db ./cache.duckdb
+python3 -m scripts.cache_status --backend duckdb --db ./cache.duckdb --table sale.order
 ```
 
 ### When to surface metrics
@@ -126,7 +127,9 @@ Honesty about token counts: from inside the skill, exact Claude token usage isn'
 
 Before running a query against cached data, run `cache_status` for the relevant model(s) and decide whether to ask the user.
 
-Thresholds (default — adjust based on user's stated cadence):
+Thresholds (default — adjust based on the user's stated cadence, including
+`decision_cadence` from the stored user profile: daily-cadence users care
+about hours, monthly-cadence users usually don't):
 - **Age < 1 hour**: use cached silently. No prompt.
 - **Age 1 hour – 24 hours**: ask the user, default to using cached.
 - **Age > 24 hours**: ask the user, default to refresh.
@@ -155,7 +158,7 @@ Records also carry `caller` (when `ODOO_SIDEKICK_CALLER` is set — one identity
 
 ## Onboarding and connection management
 
-Before doing anything else when this skill is triggered, check whether the profile config file exists at `~/.config/odoo-sidekick/profiles.yaml` (or the path in `ODOO_PROFILES_PATH`).
+Before doing anything else when this skill is triggered, check whether the profile config file exists at the path `detect_env` reports as `config_path` (default `~/.config/odoo-sidekick/profiles.yaml`; `ODOO_PROFILES_PATH` overrides it outright, and `ODOO_SIDEKICK_STATE_DIR` moves the default — don't hardcode the home-dir path on hosts that set either).
 
 - **File doesn't exist** → run **First-run onboarding** below.
 - **File exists** → run **Welcome back (profile picker)** below.
@@ -168,9 +171,11 @@ When the config file exists, before doing the user's actual work:
 2. **If the user's message clearly names a profile or an instance** (e.g. "show me sales in `acme`" or "use the read-write profile"), match it and use it without asking.
 3. **If there's only one profile**, use it silently and proceed.
 4. **If there are multiple profiles and the user hasn't named one**, briefly list them and use `ask_user_input_v0` to ask which to use. Show each profile's mode so the user can see at a glance whether they're picking a safe-or-active connection.
-5. Once a profile is chosen, proceed with the user's request.
+5. Once a profile is chosen, run `python3 -m scripts.user_profile guidance --json` silently and apply what it returns for the rest of the session (see **User context & role profiling**). If it reports `"exists": false` with onboarding not `"skipped"`, handle the user's current request first, then offer the 60-second tailoring once.
 
-6. **Run `python -m scripts.check_updates` silently in the background.** If `update_available` is true, mention it in passing once during this session — never as a blocker. Example: "By the way, v1.7 is out (you're on v1.6). Let me know if you'd like to update at some point." Do not surface anything if no update is available, the check fails, or the result is cached "no update available".
+6. Proceed with the user's request.
+
+7. **Run `python3 -m scripts.check_updates` silently in the background.** If `update_available` is true, mention it in passing once during this session — never as a blocker. Example: "By the way, v1.7 is out (you're on v1.6). Let me know if you'd like to update at some point." Do not surface anything if no update is available, the check fails, or the result is cached "no update available".
 
 If the user wants to add another profile mid-session ("connect to my client's Odoo too"), walk them through the First-run onboarding flow below for the new profile — but skip Step 1 (attribution already shown).
 
@@ -193,7 +198,7 @@ Briefly tell the user what's about to happen — a one-time setup, takes a few m
 Before asking questions, run the environment detector so the conversation is grounded in what's actually possible here:
 
 ```bash
-python -m scripts.detect_env
+python3 -m scripts.detect_env
 ```
 
 Surface the result to the user in their chat language. Be honest about constraints — especially when running in Claude.ai sandbox:
@@ -302,7 +307,7 @@ profiles:
       tz: UTC
 ```
 
-If the user approves, write to `~/.config/odoo-sidekick/profiles.yaml`. Create the directory if it doesn't exist.
+If the user approves, save it — preferably via the profiles CLI (`python3 -m scripts.profiles add <name> --url <url> --api-key-env ODOO_<NAME>_API_KEY [--mode read-write]`), which validates and writes canonical JSON (still valid YAML, and loads without PyYAML). If writing the file directly instead, prefer JSON content for the same reason — a YAML-authored file on a machine without PyYAML is unreadable to the client. Target path: `~/.config/odoo-sidekick/profiles.yaml` (create the directory if needed).
 
 **If the environment detector in Step 2 reported `claude.ai`**, mention once here: "Note — this config lives inside the conversation's sandbox. If you close this conversation, you'll need to redo this setup in any new conversation. For a persistent setup, run the skill from Cowork or Claude Code on your local machine."
 
@@ -310,10 +315,10 @@ If the user approves, write to `~/.config/odoo-sidekick/profiles.yaml`. Create t
 
 Run:
 ```bash
-python -m scripts.selftest --profile <profile>
+python3 -m scripts.selftest --profile <profile>
 ```
 
-This checks the install is complete, the profile parses, every env var the profiles file references is set in this shell, and the connection works — and names the exact failing piece when something's off. If it succeeds, tell the user, and for any profile intended as read-only, also run `python -m scripts.verify_profile <profile>` — if it reports MISALIGNED, tell the user their API key can write even though the profile says read-only, and walk them through creating a restricted Odoo user (the script's output contains the steps). Then proceed to handle their original request.
+This checks the install is complete, the profile parses, every env var the profiles file references is set in this shell, and the connection works — and names the exact failing piece when something's off. If it succeeds, tell the user, and for any profile intended as read-only, also run `python3 -m scripts.verify_profile <profile>` — if it reports MISALIGNED, tell the user their API key can write even though the profile says read-only, and walk them through creating a restricted Odoo user (the script's output contains the steps). Then proceed to handle their original request.
 
 #### Step 9 — Handle verification failures
 
@@ -334,7 +339,110 @@ After two failed verification attempts, offer SHIFTcollective help again — at 
 
 Once verification succeeds, tell the user and handle their original request.
 
+#### Step 10 — Optional: 60-second tailoring (skippable)
+
+After verification succeeds and the user's original request is handled, offer once — one line, no pressure:
+
+> One optional thing: I can tailor myself to you — what's your role, what you care about, how often you check the numbers. Takes about a minute, and everything after gets more relevant. Want to?
+
+If they accept, run the capture flow in **User context & role profiling** below. If they decline, run `python3 -m scripts.user_profile skip` so they're never asked again. Never re-offer in later sessions unless they bring it up.
+
 After onboarding completes, the attribution is **not** shown again on subsequent skill invocations. Show it only on first run, or when the user explicitly asks who made the skill / where to get support.
+
+## User context & role profiling
+
+"Show me sales" means something different to a CFO than to a production
+manager, and a €10k invoice is headline news in a 5-person shop but noise in a
+500-person one. The skill stores a small, explicit user profile at
+`<state_dir>/user_profile.yaml` — role, company size, goals, pain points,
+decision cadence — and derives concrete defaults from it. The schema is
+persona-agnostic: `role: ops-agent` is as valid as `role: CFO`, because in
+agent deployments the "user" is an agent with a role. The file holds
+preferences, never credentials, and is edited only via
+`python3 -m scripts.user_profile` (validated, locked, atomic — same
+conventions as the profiles CLI).
+
+### At session start
+
+After the connection profile is resolved (Welcome back step 5), run silently:
+
+```bash
+python3 -m scripts.user_profile guidance --json
+```
+
+- **`"exists": true`** — apply the guidance for the whole session: lead
+  open-ended requests with `default_reports`, phrase at `depth`, use
+  `materiality_hint` to calibrate words like "big" and which outliers to
+  flag, compare over `comparison_window`, and keep `pain_points` in mind.
+  Guidance sets **defaults, not restrictions** — an explicit user ask always
+  wins, and any role may ask for anything.
+- **`"exists": false` and onboarding is not `"skipped"`** — handle the current
+  request first, then offer the 60-second tailoring once (one line). If
+  declined, run `python3 -m scripts.user_profile skip` — the skip is recorded
+  and the offer never repeats.
+- **`"exists": false` and onboarding is `"skipped"`** — use generic defaults
+  silently. Re-open only if the user asks ("tailor to me", "update my
+  profile").
+
+### Capturing context (interactive)
+
+When the user accepts the offer, or asks any time ("I'm the CFO", "ask me the
+profile questions"), ask **at most three** quick questions using
+`ask_user_input_v0` (tool-portability rules apply, as in onboarding; translate
+into the user's chat language). Every question carries a "Skip" option:
+
+1. **Role** — options like `["CEO / Founder", "CFO / Finance", "Operations", "Sales", "Skip"]`
+   plus free text via "Something else". Any answer is valid — free-form roles
+   are expected, not errors.
+2. **What matters most right now** (pick 1–3): revenue growth, cost control,
+   operational efficiency, cash flow, customer retention, throughput — free
+   text welcome.
+3. **Cadence & size** in one: "How often do you check the numbers — daily,
+   weekly, monthly? And roughly how many people work at the company?"
+
+Store the answers:
+
+```bash
+python3 -m scripts.user_profile set role "CFO"
+python3 -m scripts.user_profile set goals --json-value '["cash-flow","cost-control"]'
+python3 -m scripts.user_profile set decision_cadence weekly
+python3 -m scripts.user_profile set company_size 40        # counts normalize to buckets
+```
+
+Capture `pain_points` only when the user volunteers frustrations — never
+interrogate. If they skip everything, run `python3 -m scripts.user_profile skip`.
+Close with a one-line summary of what was stored, and mention it's editable
+any time ("say 'update my profile'"). `python3 -m scripts.user_profile clear`
+forgets everything.
+
+### Applying guidance
+
+- **Open-ended asks** ("how are we doing?") start from `default_reports` and
+  `default_models`; a specific ask is answered as asked.
+- **Depth**: `executive` — headline number and delta first, tables ≤5 rows,
+  one decision-worthy callout; `operational` — record-level references, ids,
+  quantities, sorted by actionability; `balanced` — summary first, one level
+  of detail.
+- **`materiality_hint`** is a starting calibration in the instance's currency
+  — adjust the moment the user signals otherwise.
+- **Cache staleness prompts** tune with `decision_cadence` (a daily-cadence
+  user cares about hours; a monthly-cadence user usually doesn't) — see Cache
+  freshness thresholds.
+- **`is_agent: true`** (role contains agent/bot/automation/...) — prefer
+  `--json` outputs and structured results; skip conversational chrome.
+- The stored role **never** changes what the user is allowed to do — see
+  Things to never do.
+
+### Headless
+
+Never capture context interactively in a headless run. Operators pre-seed:
+
+```bash
+python3 -m scripts.user_profile seed --file <seed>.yaml    # template: assets/user_profile.example.yaml
+```
+
+`guidance --json` is the consumption interface. No profile in a headless run
+means generic defaults, silently — never a prompt.
 
 ## Safety model
 
@@ -344,7 +452,7 @@ Three layers, all of which must pass for a write to happen:
 Everything below is enforced by this skill's client, **before** the HTTP call — which means it binds only code that goes through this client. The API key keeps whatever rights its Odoo user has; curl, other wrappers, and buggy scripts are not bound by the profile's `mode`. For production analytics, bind read-only profiles to a genuinely restricted Odoo user, and prove it:
 
 ```bash
-python -m scripts.verify_profile <profile>
+python3 -m scripts.verify_profile <profile>
 ```
 
 This asks Odoo directly (`has_access`, never mutates) what the credential can do and exits 2 with loud guidance when a "read-only" profile holds a write-capable key. Run it at setup and whenever a key changes.
@@ -385,9 +493,9 @@ Note: `ODOO_SIDEKICK_STATE_DIR` moves the *default* profiles location along with
 **Edit profiles with the CLI, not with string surgery:**
 
 ```bash
-python -m scripts.profiles list
-python -m scripts.profiles set <name> mode read-write
-python -m scripts.profiles add <name> --url https://... --api-key-env ODOO_X_API_KEY
+python3 -m scripts.profiles list
+python3 -m scripts.profiles set <name> mode read-write
+python3 -m scripts.profiles add <name> --url https://... --api-key-env ODOO_X_API_KEY
 ```
 
 It validates the schema, takes a lock (concurrent editors on multi-agent hosts serialize instead of corrupting each other), and writes atomically. The canonical on-disk format is JSON — which is valid YAML and loads without PyYAML; YAML-authored files are also accepted (`migrate` converts them).
@@ -398,10 +506,11 @@ If you're creating a new profile for the user, default to `read-only` unless the
 
 ### Reads (the common case)
 
-1. Pick the profile (ask if ambiguous).
+1. Pick the profile (ask if ambiguous). For open-ended requests, let the
+   stored user context steer defaults (see User context & role profiling).
 2. Decide: live query vs cached (live for one-shot, cached for repeated/cross-model).
 3. **If using cached data**, run `cache_status --table <model>` first. Apply the staleness thresholds in the Cache freshness section above — silently use if fresh, ask if stale.
-4. Identify model and fields — use `references/models/*.md` or run `python -m scripts.introspect <profile> --model <name>`. **Never guess a model name** — if unsure, `python -m scripts.introspect <profile> --find <word>` fuzzy-searches the installed models (guessed names 404).
+4. Identify model and fields — use `references/models/*.md` or run `python3 -m scripts.introspect <profile> --model <name>`. **Never guess a model name** — if unsure, `python3 -m scripts.introspect <profile> --find <word>` fuzzy-searches the installed models (guessed names 404).
 5. Pick the right method (`search_read` for most reads, `read_group` for aggregations, `search_count` for counts).
 6. Build the domain filter (see `references/domain_syntax.md`).
 7. Execute via `scripts/odoo_client.py`.
@@ -410,11 +519,11 @@ If you're creating a new profile for the user, default to `read-only` unless the
 
 Read hygiene (these two habits prevent most waste):
 - **Batch, don't loop.** `read` takes an id *list* and `search_read` returns many records per call — one call for 100 records, never 100 calls in a loop. Always pass an explicit `fields` list.
-- **Never read attachment bodies inline.** For `ir.attachment` file content, use `python -m scripts.get_attachment <profile> --id <id> --out <file>` — it decodes to disk and returns only path + metadata. Multi-MB base64 blobs must not enter the conversation context (the CLI refuses them unless explicitly overridden).
+- **Never read attachment bodies inline.** For `ir.attachment` file content, use `python3 -m scripts.get_attachment <profile> --id <id> --out <file>` — it decodes to disk and returns only path + metadata. Multi-MB base64 blobs must not enter the conversation context (the CLI refuses them unless explicitly overridden).
 
 CLI example:
 ```bash
-python -m scripts.odoo_client <profile> sale.order read_group --json '{
+python3 -m scripts.odoo_client <profile> sale.order read_group --json '{
   "domain": [["state","in",["sale","done"]], ["date_order",">=","2025-01-01"]],
   "fields": ["amount_total:sum", "id:count"],
   "groupby": ["partner_id"],
@@ -485,20 +594,20 @@ Two levels of preview, neither of which sends a write:
 #    allow the write (a confirm_cmd hook still decides at execution time —
 #    the preview notes when one is configured). This is the artifact to
 #    show a human (or attach to an approval).
-python -m scripts.odoo_client <profile> res.partner write --json '{
+python3 -m scripts.odoo_client <profile> res.partner write --json '{
   "ids": [7, 8], "vals": {"credit_limit": 5000}
 }' --dry-run
 
 # 2. Implicit preview: any write without --confirm prints what WOULD have
 #    been sent and exits 5. Cheap safety net rather than a planning tool.
-python -m scripts.odoo_client <profile> res.partner create --json '{
+python3 -m scripts.odoo_client <profile> res.partner create --json '{
   "vals_list": [{"name": "New Customer", "is_company": true}]
 }'
 
 # Then, after chat-level confirmation, execute — with an auth reference if
 # the write executes an approval/ticket. The value must name a REAL ticket
 # or approval; never invent one to satisfy the gate.
-python -m scripts.odoo_client <profile> res.partner create --json '...' \
+python3 -m scripts.odoo_client <profile> res.partner create --json '...' \
     --confirm --auth-ref TICKET-123
 ```
 
@@ -507,7 +616,7 @@ python -m scripts.odoo_client <profile> res.partner create --json '...' \
 The cache is always a one-way mirror from Odoo to your local DB. It never writes back. See `references/caching_strategy.md`.
 
 ```bash
-python -m scripts.cache_sync <profile> --models sale.order,sale.order.line \
+python3 -m scripts.cache_sync <profile> --models sale.order,sale.order.line \
     --backend duckdb --db ./cache.duckdb --incremental
 ```
 
@@ -525,14 +634,15 @@ export ODOO_SIDEKICK_CALLER=ops-agent-3    # identity stamped on every call-log 
 Rules for a headless run:
 
 1. **Skip all conversational chrome.** No onboarding, no welcome-back, no attribution, no cache-staleness questions. Apply the documented staleness thresholds silently, taking each band's default: use cached if < 24 h old, refresh if older, and when cache is > 7 days old also emit a staleness warning in the output instead of the conversational warning.
-2. **Machine-parseable output everywhere.** Every reporting script takes `--json` (`detect_env`, `check_updates`, `show_metrics`, `cache_status`, `introspect`, `selftest`, `verify_profile`, `get_attachment`, `profiles list/show`); the client CLI emits raw JSON results and adds `--json-errors` for failures (its `--json` flag is the method-arguments payload, not an output toggle); `cache_sync` reports progress on stderr and signals via exit code. Exit codes are the contract: `0` ok · `1` error · `2` bad args · `3` refused (mode/policy) · `4` API error · `5` unconfirmed write preview · `6` auth_ref required · `7` inline-binary refused · `8` confirm_cmd rejected.
+2. **Machine-parseable output everywhere.** Every reporting script takes `--json` (`detect_env`, `check_updates`, `show_metrics`, `cache_status`, `introspect`, `selftest`, `verify_profile`, `get_attachment`, `profiles list/show`, `user_profile show/guidance`); the client CLI emits raw JSON results and adds `--json-errors` for failures (its `--json` flag is the method-arguments payload, not an output toggle); `cache_sync` reports progress on stderr and signals via exit code. The **`odoo_client` CLI's** exit codes are the contract: `0` ok · `1` error · `2` bad args · `3` refused (mode/policy) · `4` API error · `5` unconfirmed write preview · `6` auth_ref required · `7` inline-binary refused · `8` confirm_cmd rejected. Other scripts have simpler, per-script contracts — notably `verify_profile` exit `2` = MISALIGNED credential and `get_attachment` exit `3` = checksum mismatch — read each script's docstring before treating a code as the client's.
 3. **Write authorization comes from the profile, not the chat.** Chat-level confirmation (Layer 3) is replaced by whichever of these the operator configured — use them, never bypass them:
    - `write_policy` — bounds which model+method writes are attemptable at all.
    - `require_auth_ref: true` — every write carries `--auth-ref <ticket-id>` tying it to an out-of-band approval; the reference lands in the call log, making approved writes provably distinguishable later. **On exit 6, obtain a real reference** — from the routine definition, the triggering ticket, or by asking the user when one is present. **Never invent an auth_ref** to make the error go away: a fabricated reference silently converts the audit layer into decoration.
    - `confirm_cmd` — the operator's approval hook; it receives the write preview as JSON on stdin and its exit code decides. A rejection (exit code 8) is an answer, not an error — do not retry it.
 4. **Confirm rule for agents:** `confirm=True`/`--confirm` may only be passed when the write executes an explicit, pre-authorized instruction (a routine's defined action, an approved ticket). An agent must never pass it to satisfy its own curiosity, and must never react to `WriteNotConfirmed` by simply adding the flag.
-5. **State isolation is the operator's choice.** Give each agent its own `ODOO_SIDEKICK_STATE_DIR`, or share one deliberately and set `ODOO_SIDEKICK_CALLER` per agent so the shared call log stays a usable audit trail (`show_metrics --by-caller`). `ODOO_PROFILES_PATH` pins the profiles file per deployment, so scheduled runs resolve the same config as interactive ones.
-6. **Verify at deploy time, not at 3 a.m.** `selftest --json` (install + env-var wiring) and `verify_profile --json` (credential capability vs. profile mode) belong in the deployment pipeline. Client-side read-only is not a security boundary — see the Safety model.
+5. **User context comes from a seed file, never from questions.** If the operator pre-seeded `<state_dir>/user_profile.yaml` (`python3 -m scripts.user_profile seed --file ...`), consume it via `guidance --json`; if not, use generic defaults silently. The tailoring offer, like all conversational chrome, never runs headless.
+6. **State isolation is the operator's choice.** Give each agent its own `ODOO_SIDEKICK_STATE_DIR`, or share one deliberately and set `ODOO_SIDEKICK_CALLER` per agent so the shared call log stays a usable audit trail (`show_metrics --by-caller`). `ODOO_PROFILES_PATH` pins the profiles file per deployment, so scheduled runs resolve the same config as interactive ones.
+7. **Verify at deploy time, not at 3 a.m.** `selftest --json` (install + env-var wiring) and `verify_profile --json` (credential capability vs. profile mode) belong in the deployment pipeline. Client-side read-only is not a security boundary — see the Safety model.
 
 ## Reference docs
 
@@ -557,6 +667,7 @@ Load these as needed — don't read them all up front:
 - **Never confirm a write on behalf of the user.** The "yes" must come from them, in chat, for the specific plan you just surfaced.
 - **Never roll authorization forward across user messages.** Each new request gets a fresh plan and a fresh poll.
 - **Never write to a customer's production Odoo from a workflow you wouldn't undo manually.** If you can't articulate the reversal, you shouldn't run the write.
+- **Never treat the user profile as authorization.** `role` and everything else in `user_profile.yaml` shape presentation — default reports, depth, phrasing. They never widen what's permitted: a `role: CFO` gets no write access a read-only profile denies, and an agent role earns no exemption from a single confirmation gate.
 - **Don't include API keys, passwords, or sensitive credentials in the args payload you surface for confirmation.** The client redacts common patterns automatically, but check before pasting.
 
 ## Error handling notes

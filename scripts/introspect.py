@@ -3,23 +3,23 @@ Discover what's available on an Odoo instance.
 
 Usage:
     # List all installed models on this database
-    python -m scripts.introspect <profile> --list-models
+    python3 -m scripts.introspect <profile> --list-models
 
     # Search for models matching a pattern (server-side ilike)
-    python -m scripts.introspect <profile> --list-models --pattern stock
+    python3 -m scripts.introspect <profile> --list-models --pattern stock
 
     # Fuzzy-find a model when you're not sure of its name — use this BEFORE
     # guessing a model name (guessed names 404).
-    python -m scripts.introspect <profile> --find station
+    python3 -m scripts.introspect <profile> --find station
 
     # Show fields and types for a specific model
-    python -m scripts.introspect <profile> --model sale.order
+    python3 -m scripts.introspect <profile> --model sale.order
 
     # Show only certain attributes per field
-    python -m scripts.introspect <profile> --model sale.order --attrs string,type,help,required
+    python3 -m scripts.introspect <profile> --model sale.order --attrs string,type,help,required
 
     # Machine-readable output for any of the above
-    python -m scripts.introspect <profile> --find station --json
+    python3 -m scripts.introspect <profile> --find station --json
 
 --find works against a locally cached copy of the instance's model list
 (<state_dir>/model_cache/, 24h TTL) so repeated lookups don't hit the API.

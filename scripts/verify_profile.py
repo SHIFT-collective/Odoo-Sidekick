@@ -11,9 +11,9 @@ The one configuration this skill considers SAFE for production analytics:
     mode: read-only  +  a credential that genuinely cannot write.
 
 Run it at setup time and any time an API key changes:
-    python -m scripts.verify_profile <profile>
-    python -m scripts.verify_profile <profile> --models sale.order,account.move
-    python -m scripts.verify_profile <profile> --json
+    python3 -m scripts.verify_profile <profile>
+    python3 -m scripts.verify_profile <profile> --models sale.order,account.move
+    python3 -m scripts.verify_profile <profile> --json
 
 Exit codes:
     0 — profile mode and credential capability are aligned
