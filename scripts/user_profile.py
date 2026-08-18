@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from datetime import datetime, timezone
@@ -98,6 +99,8 @@ def _normalize_company_size(value: Any) -> str:
     if isinstance(value, bool):
         raise ProfileError("company_size must be a size bucket or employee count.")
     if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ProfileError("company_size must be a finite employee count.")
         n = int(value)
     else:
         text = str(value).strip().lower()

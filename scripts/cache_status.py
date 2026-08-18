@@ -89,7 +89,18 @@ def status(db_path: str, backend: str, table_filter: str | None = None) -> dict:
             f"No cache database at {db_path}. Run cache_sync first, or check "
             "the --db path."
         )
-    conn, kind = _open_backend(backend, db_path)
+    try:
+        conn, kind = _open_backend(backend, db_path)
+    except SystemExit:
+        raise
+    except Exception as e:  # noqa: BLE001 — a 0-byte or corrupt file makes the
+        # backend raise its own class; surface it as a clean message, not a
+        # raw traceback (the whole point of this being a freshness *check*).
+        raise SystemExit(
+            f"Cache DB at {db_path} could not be opened as a {backend} "
+            f"database ({type(e).__name__}). Is it a valid {backend} file? "
+            "It may be an interrupted/partial sync — re-run cache_sync."
+        )
     out: dict[str, Any] = {
         "db_path": db_path,
         "backend": backend,

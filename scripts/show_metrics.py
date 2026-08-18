@@ -201,9 +201,11 @@ def main(argv: list[str] | None = None) -> int:
     records = _read_records()
     try:
         since = _parse_since(args.since) if args.since else None
-    except ValueError:
-        p.error(f"--since {args.since!r} is neither relative ('5m','1h','2d') "
-                "nor an ISO timestamp")
+    except (ValueError, OverflowError):
+        # OverflowError: an absurdly large relative value (e.g. '10...0d')
+        # overflows timedelta — still a bad argument, not a crash.
+        p.error(f"--since {args.since!r} is neither a usable relative value "
+                "('5m','1h','2d') nor an ISO timestamp")
     last = args.last if args.last is not None else (None if args.since else 100)
     records = _filter(records, since=since, last=last)
     summary = summarize(records)

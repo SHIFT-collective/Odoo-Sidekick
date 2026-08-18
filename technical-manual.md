@@ -97,11 +97,14 @@ python3 -m scripts.selftest --json           # machine-readable output
 ```
 [ok  ] python             3.11.15
 [ok  ] skill_files        all present
+[ok  ] frontmatter_description 1019/1024 chars
 [ok  ] imports            all scripts import
 [ok  ] optional_yaml      installed
 [--  ] optional_duckdb    not installed — only needed for the DuckDB cache backend (sqlite works without it)
+[ok  ] core_module        odoo_client imports
 [--  ] profiles_file      none at ~/.config/odoo-sidekick/profiles.yaml — first-run onboarding will create it
 [ok  ] state_dir          ~/.config/odoo-sidekick is writable
+[--  ] user_profile       none at ~/.config/odoo-sidekick/user_profile.yaml — tailoring not captured (optional; seed with scripts.user_profile)
 [--  ] env_overrides      none set
 
 All required checks passed.

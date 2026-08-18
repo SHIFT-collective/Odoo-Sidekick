@@ -122,6 +122,9 @@ def run_checks(profile: str | None) -> dict:
               "profile/state/connectivity checks skipped")
         required_failed = [c for c in checks if c["required"] and c["ok"] is False]
         return {"ok": not required_failed, "skill_root": str(root), "checks": checks}
+    # Emit core_module on the success path too — otherwise it is a failure-only
+    # sentinel and `--only core_module` could never return success.
+    check("core_module", True, "odoo_client imports")
 
     # Profiles file: existence, parseability, and env-var readiness.
     ppath = _default_profiles_path()
