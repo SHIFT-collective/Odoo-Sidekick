@@ -17,14 +17,18 @@ Usage (deploy-pipeline / acceptance-criterion form):
     python3 -m scripts.selftest --only connectivity --profile main
 
 Exit codes: 0 — everything required passed (or, with --only, every named check
-was emitted and none failed); 1 — a required check failed; 2 — a name passed to
---only was never emitted (so its pass/fail could not be asserted — usually a
-typo or a check that was skipped because an earlier stage bailed out).
+was asserted as passing, i.e. ok is True); 1 — a selected/required check failed
+(ok is False); 2 — with --only, a named check could not be asserted as passing:
+it was never emitted (typo, or skipped because an earlier stage bailed out) OR
+it is informational with no pass/fail answer (ok is None — e.g. optional_yaml
+when PyYAML isn't installed, profiles_file before onboarding, env_overrides).
 
 Why --only exists: the aggregate exit code stops discriminating the moment any
 unrelated check goes red, so it can't answer "did *this* check pass?" in a
 pipeline. --only narrows the pass/fail verdict (and the exit code) to exactly
-the checks named, and fails loudly (exit 2) when a named check didn't run.
+the checks named. A gate must be *asserted*, so an informational (--) check
+never greens a --only gate — it is exit 2, the same "can't assert" signal as a
+missing check.
 """
 from __future__ import annotations
 
@@ -264,20 +268,27 @@ def main(argv: list[str] | None = None) -> int:
 
     result = run_checks(args.profile)
 
-    # --only: narrow the verdict to the named checks and fail loudly (exit 2) if
-    # any named check never ran — a missing check can't be asserted as passing.
+    # --only: narrow the verdict to the named checks. A gate must be *asserted*
+    # as passing, so only `ok is True` counts as pass. A hard failure (ok False)
+    # is exit 1; a check that never ran (missing) or that is informational with
+    # no pass/fail answer (ok None — e.g. optional_yaml not installed,
+    # profiles_file absent on first run) cannot be asserted as passing and is
+    # exit 2, never a silent exit 0.
     exit_code = 0 if result["ok"] else 1
     if only is not None:
         emitted = {c["name"] for c in result["checks"]}
         missing = only - emitted
         selected = [c for c in result["checks"] if c["name"] in only]
         failed = [c for c in selected if c["ok"] is False]
+        unassertable = [c["name"] for c in selected if c["ok"] is None]
         result = {**result, "checks": selected, "only": sorted(only),
-                  "missing": sorted(missing), "ok": not failed and not missing}
-        if missing:
-            exit_code = 2
-        elif failed:
+                  "missing": sorted(missing), "unassertable": sorted(unassertable),
+                  "ok": bool(selected) and not failed and not missing
+                        and not unassertable}
+        if failed:
             exit_code = 1
+        elif missing or unassertable:
+            exit_code = 2
         else:
             exit_code = 0
 
@@ -289,12 +300,19 @@ def main(argv: list[str] | None = None) -> int:
         for c in result["checks"]:
             print(f"[{symbols[c['ok']]}] {c['name']:<18} {c['detail']}")
         for name in result.get("missing", []):
-            print(f"[{'MISS'}] {name:<18} check was not emitted (skipped upstream?)")
+            print(f"[MISS] {name:<18} check was not emitted (skipped upstream?)")
         if exit_code == 0:
             print("\nAll required checks passed." if only is None
                   else f"\nAll --only checks passed: {', '.join(sorted(only))}.")
         elif exit_code == 2:
-            print("\nPROBLEM — a --only check was not emitted (see MISS lines).")
+            bits = []
+            if result.get("missing"):
+                bits.append(f"not emitted: {', '.join(result['missing'])}")
+            if result.get("unassertable"):
+                bits.append("informational, no pass/fail answer: "
+                            f"{', '.join(result['unassertable'])}")
+            print("\nPROBLEM — a --only check could not be asserted as passing "
+                  f"({'; '.join(bits)}).")
         else:
             print("\nPROBLEMS FOUND — see FAIL lines above.")
     return exit_code

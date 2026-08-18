@@ -112,6 +112,8 @@ All required checks passed.
 
 The `--  ` lines are informational, not failures, missing `duckdb` and a not-yet-created profiles file are both fine at this stage.
 
+For a deploy pipeline that needs to assert one *specific* thing, the aggregate `0`/`1` exit code is too blunt — it stops discriminating the moment any unrelated check goes red. Two flags narrow it. `python3 -m scripts.selftest --list` prints every check name (`python`, `imports`, `state_dir`, `connectivity`, …). `python3 -m scripts.selftest --only imports,state_dir` restricts the verdict and the exit code to just those checks: exit `0` only if every named check is *asserted as passing* (`ok` is true), exit `1` if a named check actively fails, and exit `2` if a named check can't be asserted — either it wasn't emitted (a typo, or a stage that bailed out earlier) or it's one of the informational `--` checks that has no pass/fail answer (`optional_yaml` when PyYAML isn't installed, `profiles_file` before onboarding, `env_overrides`). So `--only optional_yaml` is a real gate on PyYAML being present, and an informational check never silently greens a gate. `--only` accepts only names from `--list`; an unknown name is a usage error (exit `2`).
+
 ### Check which environment you're in
 
 Once the self-test is clean, run the environment detector so you know what's actually possible on this surface before you start configuring anything:
