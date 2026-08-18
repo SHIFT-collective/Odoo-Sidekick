@@ -190,7 +190,7 @@ in the JSON response (observed: 9 MB+ single responses). Never pull that into
 an agent context. Use:
 
 ```
-python -m scripts.get_attachment <profile> --id <id> --out <path>
+python3 -m scripts.get_attachment <profile> --id <id> --out <path>
 ```
 
 which decodes to disk and prints only path + metadata. The CLI refuses

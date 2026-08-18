@@ -51,15 +51,21 @@ join across models, join on those ids.
 ## Incremental sync
 
 The sync script tracks a per-model `last_write_date` in the `_sync_state` table.
-With `--incremental`, only records with `write_date > last_write_date` are fetched.
+With `--incremental`, only records with `write_date >= last_write_date` are
+fetched (`>=`, not `>` — records modified later within the boundary second
+would otherwise be missed; the upsert makes re-fetching boundary rows
+idempotent). Every run — including one that finds no changes — refreshes the
+model's `synced_at`, so `cache_status` reflects when freshness was last
+verified, not just when data last changed.
 
 This works because every Odoo record has automatic `create_date` and `write_date`
 timestamps. Records are upserted by `id`.
 
 Caveats:
 - **Deletions are not propagated.** If a record is deleted in Odoo, it stays in
-  the cache. For models where this matters, run a periodic full re-sync (drop
-  the table or just call without `--incremental`).
+  the cache — and a full (non-incremental) re-run does NOT purge it either,
+  because the sync only ever upserts. For models where this matters, drop the
+  table (or the whole cache DB) and re-sync from scratch.
 - **Archived records**: if the API user can't see archived records, they won't
   come through. The cache will retain the last-seen version.
 - **Schema drift**: if Odoo adds fields between syncs, the script ALTERs the

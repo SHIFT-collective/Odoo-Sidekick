@@ -21,12 +21,12 @@ default to avoid bloating the cache (use --include-binary to override).
 
 Usage:
     # Initial full sync
-    python -m scripts.cache_sync <profile> \\
+    python3 -m scripts.cache_sync <profile> \\
         --models sale.order,sale.order.line,res.partner \\
         --backend duckdb --db ./cache.duckdb
 
     # Incremental — only records changed since last sync
-    python -m scripts.cache_sync <profile> \\
+    python3 -m scripts.cache_sync <profile> \\
         --models sale.order,sale.order.line \\
         --backend duckdb --db ./cache.duckdb --incremental
 """
@@ -146,7 +146,7 @@ def get_last_write_date(backend: Backend, model: str) -> str | None:
     return row[0] if row else None
 
 
-def set_last_write_date(backend: Backend, model: str, last_write_date: str) -> None:
+def set_last_write_date(backend: Backend, model: str, last_write_date: str | None) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     if backend.name == "sqlite":
         backend.execute(
@@ -288,8 +288,11 @@ def sync_model(
     if incremental:
         last = get_last_write_date(backend, model)
         if last:
-            domain = [["write_date", ">", last]]
-            print(f"[{model}] incremental from write_date > {last}", file=sys.stderr)
+            # ">=" not ">": records modified later within the boundary second
+            # would otherwise be skipped forever. The upsert makes re-fetching
+            # the boundary rows idempotent.
+            domain = [["write_date", ">=", last]]
+            print(f"[{model}] incremental from write_date >= {last}", file=sys.stderr)
         else:
             print(f"[{model}] no prior sync state; doing full sync", file=sys.stderr)
 
@@ -314,8 +317,14 @@ def sync_model(
             break
         offset += page_size
 
-    if max_write_date:
-        set_last_write_date(backend, model, max_write_date)
+    # Always record the sync moment — a no-change incremental run still
+    # verified freshness, and leaving synced_at stale makes cache_status
+    # report (and staleness prompts re-trigger on) data that was checked
+    # seconds ago. Carry the previous boundary forward when nothing new
+    # was seen.
+    if max_write_date is None and incremental:
+        max_write_date = get_last_write_date(backend, model)
+    set_last_write_date(backend, model, max_write_date)
     print(f"[{model}] done. {total} rows.", file=sys.stderr)
     return total
 

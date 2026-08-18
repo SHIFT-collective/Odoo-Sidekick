@@ -2,7 +2,7 @@
 
 *Get answers from your Odoo data by asking Claude in plain English.*
 
-**Version covered:** 1.8 &nbsp;·&nbsp; **Last updated:** 2026-07-14
+**Version covered:** 1.9 &nbsp;·&nbsp; **Last updated:** 2026-08-18
 
 Instead of clicking through Odoo's menus, filters, and saved reports, you can just ask. "What did we sell last month?" "Which invoices are overdue?" "What's low on stock?" Claude reads your Odoo data live and answers in seconds, in plain language, in whatever format is actually useful to you. This guide covers how to get set up, what to ask, and how to get the most useful answers out of it. Read it once, keep it nearby for the first few weeks.
 
@@ -74,6 +74,20 @@ A few habits make a real difference:
 - **Ask for the latest data** if something feels out of date. Claude will sometimes work from a locally cached copy of your data for speed. Just say "get me the current numbers" or "refresh that" and it will pull live from Odoo.
 - **If you ask the same question every week** (a Monday sales recap, a cash position check), just ask again each time, it runs fresh against real data every time. A fully automatic version of this is on the roadmap; ask your admin whether that's been set up separately in the meantime.
 - **You don't need to know Odoo's field names or menu structure.** Describe what you want in normal business language; Claude translates that into the right query for you.
+
+## Make It Yours
+
+Claude can also learn who *you* are — and tailor its answers to match. "How are we doing?" means something different to a CFO than to a production manager: one wants the cash and receivables headlines, the other wants this morning's orders and what's stuck. Tell Claude which one you are, and everything after gets more relevant — what it leads with, how much detail it gives, and what counts as a number worth flagging.
+
+Shortly after setup, you'll get a one-time offer to do this. It's three quick questions — your role, what matters most to you right now, and how often you check the numbers — and takes about a minute. Answer what you like and skip the rest; if you'd rather not do it at all, just say so, and it will never ask again.
+
+You can also bring it up yourself, any time, in plain words:
+
+- **"Tailor to me"** — start (or restart) the quick questions whenever you're ready.
+- **"Update my profile"** — change something later, like "I've moved from sales to operations" or "give me more detail from now on."
+- **"Forget my profile"** — erase it completely and go back to neutral answers.
+
+What you share stays in a small preferences file on the machine where you set it up — no passwords, no keys, just context. And it only shapes how answers are presented: it never changes what you're allowed to see or do in Odoo.
 
 ## Changes and Safety
 

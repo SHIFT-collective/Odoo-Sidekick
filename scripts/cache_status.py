@@ -10,10 +10,10 @@ the data in a usable form. Use it before running queries against the cache
 to decide whether a refresh is needed first.
 
 Usage:
-    python -m scripts.cache_status --backend duckdb --db ./cache.duckdb
-    python -m scripts.cache_status --backend sqlite --db ./cache.sqlite
-    python -m scripts.cache_status --backend duckdb --db ./cache.duckdb --table sale.order
-    python -m scripts.cache_status --backend duckdb --db ./cache.duckdb --json
+    python3 -m scripts.cache_status --backend duckdb --db ./cache.duckdb
+    python3 -m scripts.cache_status --backend sqlite --db ./cache.sqlite
+    python3 -m scripts.cache_status --backend duckdb --db ./cache.duckdb --table sale.order
+    python3 -m scripts.cache_status --backend duckdb --db ./cache.duckdb --json
 """
 from __future__ import annotations
 
@@ -82,6 +82,13 @@ def _table_exists(conn, backend_kind: str, name: str) -> bool:
 
 def status(db_path: str, backend: str, table_filter: str | None = None) -> dict:
     """Return cache freshness for all (or one) cached model."""
+    # A freshness CHECK must never create the DB as a side effect (sqlite's
+    # connect() would) or die with a raw backend traceback (duckdb's would).
+    if not Path(db_path).exists():
+        raise SystemExit(
+            f"No cache database at {db_path}. Run cache_sync first, or check "
+            "the --db path."
+        )
     conn, kind = _open_backend(backend, db_path)
     out: dict[str, Any] = {
         "db_path": db_path,
@@ -101,6 +108,15 @@ def status(db_path: str, backend: str, table_filter: str | None = None) -> dict:
     rows = conn.execute(
         "SELECT model, last_write_date, synced_at FROM _sync_state ORDER BY model"
     ).fetchall()
+
+    if table_filter and table_filter not in {r[0] for r in rows}:
+        out["note"] = (
+            f"Model {table_filter!r} is not in this cache. Cached models: "
+            + (", ".join(sorted(r[0] for r in rows)) or "none")
+            + f". Sync it with: python3 -m scripts.cache_sync <profile> "
+            f"--models {table_filter} --backend {backend} --db {db_path}"
+        )
+        return out
 
     now = datetime.now(timezone.utc)
     for model, last_write_date, synced_at in rows:

@@ -4,8 +4,8 @@
 # Override the path with the ODOO_PROFILES_PATH env var.
 #
 # EDITING THIS FILE: prefer the profiles CLI over hand edits —
-#     python -m scripts.profiles set <name> mode read-write
-#     python -m scripts.profiles add <name> --url ... --api-key-env VAR
+#     python3 -m scripts.profiles set <name> mode read-write
+#     python3 -m scripts.profiles add <name> --url ... --api-key-env VAR
 # It validates the schema, takes a lock, and writes atomically. Hand edits
 # with sed/string surgery have corrupted real deployments. The CLI writes
 # canonical JSON (which is valid YAML and loads without PyYAML); files
@@ -24,7 +24,7 @@
 #     rights its Odoo user has, and code that bypasses this client is not
 #     bound by it. For production, bind read-only profiles to a genuinely
 #     restricted Odoo user and prove it:
-#         python -m scripts.verify_profile <name>
+#         python3 -m scripts.verify_profile <name>
 #   - 'default_context' is merged into every call. Useful for forcing a lang
 #     or timezone for consistent date/datetime interpretation.
 

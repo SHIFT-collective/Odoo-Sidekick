@@ -23,25 +23,29 @@ use, and a command reference. This README stays focused on install and architect
    - SQLite is in the stdlib — no install.
 3. Run the self-test — it verifies the install is complete before anything
    else has a chance to fail confusingly:
-   `python -m scripts.selftest`
+   `python3 -m scripts.selftest`
 4. Create your profile config at `~/.config/odoo-sidekick/profiles.yaml` —
    either based on `assets/profiles.example.yaml`, or with the CLI:
-   `python -m scripts.profiles add main --url https://yourco.odoo.com --api-key-env ODOO_MAIN_API_KEY`
+   `python3 -m scripts.profiles add main --url https://yourco.odoo.com --api-key-env ODOO_MAIN_API_KEY`
    **All profiles default to read-only.** Set `mode: read-write` on a profile
    only when you genuinely need writes.
 5. Set your API key env var(s):
    `export ODOO_MAIN_API_KEY=...`
 6. (Optional) Check what environment you're in:
-   `python -m scripts.detect_env`
+   `python3 -m scripts.detect_env`
    The skill recognizes Claude.ai (sandboxed/ephemeral), Cowork and Claude
    Code (local/persistent), plus a declared headless mode for autonomous
    agents, and surfaces use-case guidance for each.
 7. Test connectivity and credential alignment:
-   `python -m scripts.selftest --profile main`
-   `python -m scripts.verify_profile main`
+   `python3 -m scripts.selftest --profile main`
+   `python3 -m scripts.verify_profile main`
    The second command asks Odoo what your API key can actually do — a
    read-only profile holding a write-capable key gets flagged loudly,
    because the profile mode alone is client-side, not a security boundary.
+8. (Optional) Tell the skill who you are so it tailors itself — in chat
+   ("tailor to me") or pre-seeded for headless agents:
+   `python3 -m scripts.user_profile seed --file assets/user_profile.example.yaml`
+   Then `python3 -m scripts.user_profile guidance` shows what changes.
 
 ## Which Claude surface should I use this from?
 
@@ -67,11 +71,13 @@ odoo-sidekick/
 ├── technical-manual.pdf
 ├── LICENSE                           # Apache 2.0 + Commons Clause + Competitive Use Restriction
 ├── assets/
-│   └── profiles.example.yaml         # Profile config template
+│   ├── profiles.example.yaml         # Profile config template
+│   └── user_profile.example.yaml     # User-context seed template (headless pre-seed)
 ├── VERSION                           # Single source of truth for the skill's version
 ├── scripts/
 │   ├── odoo_client.py                # JSON-2 client: mode/policy/confirm gates, retries, error hints, audit log
 │   ├── profiles.py                   # Safe profile editing: validated, locked, atomic
+│   ├── user_profile.py               # User context & role profiling: capture, seed, derive guidance
 │   ├── verify_profile.py             # Prove what a credential can do server-side
 │   ├── selftest.py                   # Install/config/env sanity check — run first
 │   ├── introspect.py                 # Schema & model discovery incl. fuzzy --find
@@ -104,7 +110,7 @@ Layered gates protect against unintended writes:
 Everything below is enforced client-side, which binds only code that goes
 through this client. The API key keeps whatever rights its Odoo user has.
 Bind read-only profiles to genuinely restricted Odoo users, and prove the
-alignment with `python -m scripts.verify_profile <name>` — it asks Odoo
+alignment with `python3 -m scripts.verify_profile <name>` — it asks Odoo
 directly (`has_access`, never mutates) and exits 2 with remediation steps
 when a "read-only" profile holds a write-capable key.
 
@@ -169,7 +175,7 @@ print(c.dry_run("res.partner", "write", {"ids": new_ids, "vals": {"phone": "+1 .
 - **v1.5** — Environment auto-detection (Claude.ai / Cowork / Claude Code), surface-aware onboarding, strengthened chat-history warnings, rotation reminder
 - **v1.6** — Update checker (compares local VERSION against upstream GitHub, with 24h cache, release notes, graceful network-failure handling)
 - **v1.7** — Per-call metrics logging (`show_metrics`), cache freshness reporting (`cache_status`), conversational staleness prompts before querying cached data
-- **v1.8** — Reliability, audit & headless hardening (shaped by production feedback from a 24-day / 8,600-call multi-agent deployment) ← **current**
+- **v1.8** — Reliability, audit & headless hardening (shaped by production feedback from a 24-day / 8,600-call multi-agent deployment)
   - Server error bodies surfaced with remediation hints on every failure; `--json-errors` for machine callers; bounded retry with backoff+jitter for transient read failures (never writes, never deterministic errors)
   - Audit trail: `caller` (ODOO_SIDEKICK_CALLER) and `auth_ref` (`--auth-ref`) recorded per call; `require_auth_ref` profiles; `show_metrics --by-caller`; log rotation archives instead of truncating
   - `verify_profile.py` proves credential capability server-side; `write_policy` model/method allowlists; `confirm_cmd` headless approval hook
@@ -177,24 +183,14 @@ print(c.dry_run("res.partner", "write", {"ids": new_ids, "vals": {"phone": "+1 .
   - Rich `--dry-run` with per-record before→after diffs — the write preview IS the approval artifact
   - `get_attachment.py` (downloads to disk — no more multi-MB base64 in context); `introspect --find` fuzzy model discovery; `selftest.py`; headless surface in `detect_env`; `references/odoo19_field_changes.md`
 
+- **v1.9** — User context & role profiling + plumbing hardening ← **current**
+  - `scripts/user_profile.py`: capture **role / company size / goals / pain points / decision cadence** at `<state_dir>/user_profile.yaml` (canonical-JSON-in-`.yaml`, locked, atomic — same conventions as profiles). Persona-agnostic: `role: ops-agent` is as valid as `role: CFO`.
+  - `guidance` derives concrete defaults: role-family playbooks (lead reports + likely models), phrasing depth (executive / balanced / operational), a materiality hint scaled by company size, a comparison window from cadence, and agent-consumer detection (`is_agent` switches phrasing to structured/JSON) — the hooks v2.0 routines and v2.1 insights build on.
+  - Capture is **skippable** (≤3 quick questions; a skip is recorded and never re-asked) and **pre-seedable** for headless (`seed --file`, template at `assets/user_profile.example.yaml`). `selftest` and `detect_env` surface the profile's presence.
+  - Plumbing hardening from a full pass over the scripts plus production feedback: update checker no longer reports a stale `update_available` after upgrading; incremental cache sync records `synced_at` on no-change runs (kills spurious staleness prompts) and uses a `>=` boundary (no lost boundary-second records); `cache_status` no longer creates the DB file / crashes on a missing one, and names the missing model when `--table` isn't cached; `show_metrics` survives malformed log lines and rejects bad `--since` cleanly; `odoo_client --json-errors` now also covers refusal exits 3/6; `profiles show` honors `--json` vs human output; selftest checks the SKILL.md frontmatter length; clearer PyYAML remediation hints.
+  - Hardening driven by a large multi-agent production deployment: **all documented commands use `python3 -m`** (bare `python` is missing from PATH on many modern hosts — the old docs made even `selftest` fail to launch); `profiles.py` **writes through a symlink** instead of clobbering it (deployments that symlink `profiles.yaml` at a canonical store kept breaking); and `selftest` gained **`--only NAME[,…]`** and **`--list`** so a deploy pipeline can gate on one specific check (exit 2 when a named check never ran) rather than an aggregate exit code that stops discriminating once any unrelated check goes red.
+
 ### Planned
-
-#### v1.9 — User context & role profiling
-
-Goal: ask the user a few questions during onboarding (or any time) to understand who they are and what they care about, then tailor everything downstream.
-
-Captured per-user:
-- **Primary role** — CEO, CFO, Operations Director, Sales Lead, Accountant, Production Manager, Marketing, etc. The schema is persona-agnostic: `role: ops-agent` is as valid as `role: CFO`, because in agent deployments the "user" is an agent with a role.
-- **Company size context** — to scale thresholds (€10k "big revenue" for a 5-person shop ≠ €10k for a 500-person one).
-- **Primary goals** — revenue growth, cost control, operational efficiency, cash flow, customer retention, throughput.
-- **Pain points** — what frustrates them currently.
-- **Decision cadence** — daily, weekly, monthly?
-
-Stored at `<state_dir>/user_profile.yaml`. Onboarding is skippable and pre-seedable from a file, so headless deployments never fight the interactive flow. Used to:
-- Set sensible defaults for queries (a CFO defaults to financial reports; an Ops Director to inventory and MRO).
-- Calibrate phrasing and depth (executive summary vs operational detail).
-- Pre-populate v2.0 routines.
-- Inform v2.1 insight surfacing.
 
 #### v2.0 — Scheduled routines & check-ins
 

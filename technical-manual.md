@@ -2,8 +2,8 @@
 
 *A Claude skill by SHIFTcollective, bridging Claude to Odoo 19 over the External JSON-2 API.*
 
-**Version covered:** 1.8
-**Last updated:** 2026-07-14
+**Version covered:** 1.9
+**Last updated:** 2026-08-18
 
 This is the in-depth technical reference: setting the skill up, understanding its safety model in full, and getting the most out of reads, writes, caching, and automation, aimed at admins, implementers, and technical/power users. **If you're a day-to-day Odoo user who just wants to get value out of this without the implementation details, read `quick-start-guide.md` instead** — it's six pages and covers everything you actually need. For the underlying agent instructions the skill runs on, see `SKILL.md`; for narrower technical references (domain syntax, model field lists, Odoo 19 schema quirks), see the `references/` directory this manual points to throughout.
 
@@ -29,7 +29,7 @@ This is the in-depth technical reference: setting the skill up, understanding it
 
 Odoo Sidekick is a Claude skill that bridges Claude to an Odoo 19 instance over Odoo's External JSON-2 API (`POST /json/2/<model>/<method>`). It lets you ask Claude, in plain language, to pull data out of Odoo, analyze it, and, if you choose to allow it, make changes back to it. There's no separate app to run: the skill lives in your skills directory and Claude invokes its Python scripts directly.
 
-By default every profile is read-only. You can query sales orders, invoices, inventory moves, manufacturing orders, contacts, and purchases using a whitelist of safe read methods (`search_read`, `read_group`, and similar), and optionally mirror any model into a local DuckDB or SQLite cache for faster, repeated analysis (aging reports, cohort breakdowns, joins across models that would be slow to re-fetch every time). Writes are opt-in: a profile has to be explicitly configured as `read-write`, and even then every request that implies a write (creating a contact, updating a price, posting an invoice) requires explicit confirmation, either from you in chat or from an operator-configured approval mechanism in unattended deployments. Nothing is written without an approved plan.
+By default every profile is read-only. You can query sales orders, invoices, inventory moves, manufacturing orders, contacts, and purchases using a whitelist of safe read methods (`search_read`, `read_group`, and similar), and optionally mirror any model into a local DuckDB or SQLite cache for faster, repeated analysis (aging reports, cohort breakdowns, joins across models that would be slow to re-fetch every time). Writes are opt-in: a profile has to be explicitly configured as `read-write`, and even then every request that implies a write (creating a contact, updating a price, posting an invoice) requires explicit confirmation, either from you in chat or from an operator-configured approval mechanism in unattended deployments. Nothing is written without an approved plan. Since v1.9 the skill can also learn *who* it's talking to — role, company size, goals, decision cadence — via a few skippable questions (or a headless seed file) and tailor its default reports, depth, and phrasing accordingly; see **The user profile** in the setup chapter.
 
 The skill runs from three different Claude surfaces, each with different runtime characteristics — Claude.ai (web/mobile, sandboxed and ephemeral, good for one-off questions or demos), Cowork (your real filesystem, persistent config, good for recurring reports and local-file workflows), Claude Code (your real filesystem, persistent config, good for iterating on the skill or scripting batch operations) — plus a declared headless mode (`ODOO_SIDEKICK_HEADLESS=1`) for autonomous agents and CI where no human is present to confirm anything. Profiles and cached databases stay local to whichever machine set them up.
 
@@ -80,19 +80,19 @@ Regardless of which surface you start on, remember that **the skill travels, the
 Before configuring a profile or touching a real Odoo instance, run:
 
 ```bash
-python -m scripts.selftest
+python3 -m scripts.selftest
 ```
 
-This exists specifically to catch a broken or partial install (a missing script, an optional dependency you forgot, an env var set in one shell but not another) in seconds, before it fails confusingly mid-task. It checks, offline by default: your Python version (needs 3.9+), that all required skill files and script modules are present, that every script module imports cleanly, whether the optional `yaml` and `duckdb` packages are installed (their absence is reported but doesn't fail the run), whether a profiles file already exists and parses, whether any `${ENV_VAR}` references in it are actually set in your current shell, and whether the state directory is writable.
+This exists specifically to catch a broken or partial install (a missing script, an optional dependency you forgot, an env var set in one shell but not another) in seconds, before it fails confusingly mid-task. It checks, offline by default: your Python version (needs 3.9+), that all required skill files and script modules are present, that `SKILL.md`'s frontmatter description is within the platform's 1024-character limit (an oversized description silently breaks skill triggering), that every script module imports cleanly, whether the optional `yaml` and `duckdb` packages are installed (their absence is reported but doesn't fail the run), whether a profiles file already exists and parses, whether any `${ENV_VAR}` references in it are actually set in your current shell, whether the state directory is writable, and — if a user profile (`user_profile.yaml`, see **The user profile** below) exists — that it parses and validates, so a corrupt tailoring file surfaces here instead of erroring at session start. The optional-and-informational checks (`user_profile` among them) never fail the run.
 
 Useful variants:
 
 ```bash
-python -m scripts.selftest --profile main   # also test connectivity for profile "main"
-python -m scripts.selftest --json           # machine-readable output
+python3 -m scripts.selftest --profile main   # also test connectivity for profile "main"
+python3 -m scripts.selftest --json           # machine-readable output
 ```
 
-`--profile <name>` adds a live connectivity check (a `search_count` on `res.partner`) using that profile, so run it plain first and only add `--profile` once you actually have one configured. Exit code is `0` when every required check passes and `1` if something required is broken, which makes it easy to gate automation on it (`python -m scripts.selftest || exit 1`). A representative clean run looks like this:
+`--profile <name>` adds a live connectivity check (a `search_count` on `res.partner`) using that profile, so run it plain first and only add `--profile` once you actually have one configured. Whatever goes wrong during that check — a client error or something entirely unexpected — is reported as a failed `connectivity` check with the exception named, never as a crash: the self-test must survive exactly the failures it exists to diagnose. Exit code is `0` when every required check passes and `1` if something required is broken, which makes it easy to gate automation on it (`python3 -m scripts.selftest || exit 1`). A representative clean run looks like this:
 
 ```
 [ok  ] python             3.11.15
@@ -114,8 +114,8 @@ The `--  ` lines are informational, not failures, missing `duckdb` and a not-yet
 Once the self-test is clean, run the environment detector so you know what's actually possible on this surface before you start configuring anything:
 
 ```bash
-python -m scripts.detect_env         # human-readable
-python -m scripts.detect_env --json  # machine-readable, for scripts/agents
+python3 -m scripts.detect_env         # human-readable
+python3 -m scripts.detect_env --json  # machine-readable, for scripts/agents
 ```
 
 It reports the detected surface (`claude.ai`, `cowork`, `claude_code`, `local`, or `headless` if `ODOO_SIDEKICK_HEADLESS` is set), whether the filesystem is sandboxed, where the profile config path resolves to, whether that config will persist, and surface-specific recommendations and "best for" guidance. `local` is a catch-all, not a fourth surface you deliberately pick: it's what `detect_env` reports when it can't find any Claude.ai, Cowork, or Claude Code markers at all, and it recommends treating that case exactly like Cowork or Claude Code (persistent config, Path A for the API key). This matters most on Claude.ai: if `detect_env` reports an ephemeral, sandboxed filesystem and you're planning recurring work, that's your signal to stop and set up on Cowork or Claude Code instead, rather than losing a freshly-built profile the moment the conversation ends.
@@ -124,7 +124,7 @@ It reports the detected surface (`claude.ai`, `cowork`, `claude_code`, `local`, 
 
 ## First-Time Setup Walkthrough
 
-The first time you trigger Odoo Sidekick in a chat session (Claude.ai, Cowork, or Claude Code), it checks whether a profile config already exists at `~/.config/odoo-sidekick/profiles.yaml` (or wherever `ODOO_PROFILES_PATH` points). If it doesn't, you get a one-time, conversational setup walk-through. It takes a few minutes and ends with a verified connection to your Odoo instance. Here's what to expect, step by step.
+The first time you trigger Odoo Sidekick in a chat session (Claude.ai, Cowork, or Claude Code), it checks whether a profile config already exists at `~/.config/odoo-sidekick/profiles.yaml` (or wherever `ODOO_PROFILES_PATH` points). If it doesn't, you get a one-time, conversational setup walk-through. It takes a few minutes and ends with a verified connection to your Odoo instance. Here's what to expect, step by step. (A note on paths: everywhere this manual writes `~/.config/odoo-sidekick/...`, that is the skill's *state directory* — profiles file, call log, update-check cache, user profile and all — and the whole directory moves wholesale when `ODOO_SIDEKICK_STATE_DIR` is set. `~/.config/odoo-sidekick` is just its default location.)
 
 1. **Attribution.** You'll see a short note that the skill is built by SHIFTcollective, with contact info. This only appears once, on first run.
 
@@ -150,24 +150,24 @@ The first time you trigger Odoo Sidekick in a chat session (Claude.ai, Cowork, o
 
 7. **Config generation.** The skill assembles the profile (URL, API key reference, mode, and a default context for language/timezone) and asks permission before writing it to `~/.config/odoo-sidekick/profiles.yaml`. It's shown to you in YAML for readability, but treat that as a starting point, not the permanent format: the first time you edit anything with `profiles.py` (see below), the whole file gets normalized to canonical JSON.
 
-8. **Connection verification.** Two checks close out setup. First, `python -m scripts.selftest --profile <profile>` confirms the install is complete, the profile parses, every environment variable your config references is actually set in the current shell, and the live connection works. It names the specific piece that's broken if something fails (bad key, env var not loaded, wrong URL, JSON-2 API not enabled on your Odoo plan, and so on).
+8. **Connection verification.** Two checks close out setup. First, `python3 -m scripts.selftest --profile <profile>` confirms the install is complete, the profile parses, every environment variable your config references is actually set in the current shell, and the live connection works. It names the specific piece that's broken if something fails (bad key, env var not loaded, wrong URL, JSON-2 API not enabled on your Odoo plan, and so on).
 
-   For any profile meant to be read-only, also run `python -m scripts.verify_profile <profile>`. This asks Odoo directly what the underlying credential can actually do, since the profile's `mode: read-only` setting is enforced by this skill's client, not by Odoo. If the credential itself can write, `verify_profile` reports it as misaligned and walks you through creating a properly restricted Odoo user instead. Once both checks pass, the skill proceeds to your original request.
+   For any profile meant to be read-only, also run `python3 -m scripts.verify_profile <profile>`. This asks Odoo directly what the underlying credential can actually do, since the profile's `mode: read-only` setting is enforced by this skill's client, not by Odoo. If the credential itself can write, `verify_profile` reports it as misaligned and walks you through creating a properly restricted Odoo user instead. Once both checks pass, the skill proceeds to your original request.
 
-### Editing profiles afterward: use `profiles.py`, not the file directly
+9. **Optional: 60-second tailoring (skippable).** After verification succeeds and your original request has been handled, you get a one-line, one-time offer: the skill can learn who you are — your role, what you care about, how often you check the numbers — so its defaults get more relevant. Accepting means at most three quick questions (every one of them skippable); the answers land in a small user profile file described in **The user profile** below. Declining is a first-class outcome: the skill records the skip and **never re-asks in later sessions** — the offer only reopens if you bring it up yourself ("tailor to me", "update my profile"). Either way, setup is complete at this point.
 
 Once a profile exists, don't hand-edit `profiles.yaml` (or the JSON it may be stored as). Use the `profiles` CLI, which validates the schema, takes a lock so concurrent edits on shared/multi-agent hosts don't corrupt the file, and writes atomically:
 
 ```bash
-python -m scripts.profiles list                                          # see configured profiles, never prints keys
-python -m scripts.profiles show <name>                                   # show one profile, api_key redacted
-python -m scripts.profiles add <name> --url https://... --api-key-env ODOO_X_API_KEY [--mode read-only|read-write] [--database DB]
-python -m scripts.profiles set <name> <key> <value>                      # e.g. set <name> mode read-write
-python -m scripts.profiles set <name> write_policy --json-value '{"allow": [...], "deny_models": [...]}'
-python -m scripts.profiles unset <name> <key>
-python -m scripts.profiles remove <name>
-python -m scripts.profiles set-default <name>
-python -m scripts.profiles migrate                                       # rewrite a YAML-authored file as canonical JSON
+python3 -m scripts.profiles list                                          # see configured profiles, never prints keys
+python3 -m scripts.profiles show <name>                                   # show one profile, api_key redacted
+python3 -m scripts.profiles add <name> --url https://... --api-key-env ODOO_X_API_KEY [--mode read-only|read-write] [--database DB]
+python3 -m scripts.profiles set <name> <key> <value>                      # e.g. set <name> mode read-write
+python3 -m scripts.profiles set <name> write_policy --json-value '{"allow": [...], "deny_models": [...]}'
+python3 -m scripts.profiles unset <name> <key>
+python3 -m scripts.profiles remove <name>
+python3 -m scripts.profiles set-default <name>
+python3 -m scripts.profiles migrate                                       # rewrite a YAML-authored file as canonical JSON
 ```
 
 A few practical notes:
@@ -177,6 +177,49 @@ A few practical notes:
 - `url` and `api_key` can never be `unset`, only replaced with `set`; `remove` refuses to delete your last remaining profile.
 
 For the full shape of a profiles file, including a read-write profile (`main_rw`) and a headless-style profile (`ops_agent`) with `write_policy` and `require_auth_ref` set (and `confirm_cmd` shown as a commented-out example of the headless approval hook), see `assets/profiles.example.yaml` in the skill directory. It's the authoritative reference for every field a profile can carry.
+
+### The user profile: telling the skill who you are
+
+Connection profiles say *where* the skill connects; the **user profile** (new in v1.9) says *who it's talking to*. "Show me sales" means something different to a CFO than to a production manager, and a €10k invoice is headline news in a 5-person shop but noise in a 500-person one. The user profile is a small, explicit file at `<state_dir>/user_profile.yaml` (default `~/.config/odoo-sidekick/user_profile.yaml`, moved by `ODOO_SIDEKICK_STATE_DIR`) that captures exactly that context, and nothing else: **it holds preferences, never credentials.** Like the profiles file, its canonical on-disk format is JSON (still valid YAML, loads without PyYAML), and it is only ever edited through its CLI — validated, under an advisory lock, written atomically.
+
+**What it stores.** Seven optional keys, all settable independently:
+
+| Key | Values | What it drives |
+|---|---|---|
+| `role` | free-form string ≤120 chars (`CFO`, `Operations Director`, `ops-agent`) | Which playbook of default reports/models applies, and the default depth |
+| `company_size` | a bucket (`solo`, `2-10`, `11-50`, `51-200`, `201-500`, `500+`) or a plain employee count, normalized to a bucket | What counts as "a notable amount" (materiality hint) |
+| `goals` | list of strings; the known vocabulary `revenue-growth`, `cost-control`, `operational-efficiency`, `cash-flow`, `customer-retention`, `throughput` unlocks extra focus reports, free text is kept as-is | Extra reports/models appended to the defaults |
+| `pain_points` | list of free-text strings | Surfaced back in guidance so answers can address them |
+| `decision_cadence` | `daily` \| `weekly` \| `monthly` \| `quarterly` \| `ad-hoc` | The default comparison window ("vs yesterday" vs "vs prior quarter") |
+| `detail_preference` | `executive` \| `balanced` \| `operational` (optional) | Overrides the depth the role would otherwise imply |
+| `language` | optional string, e.g. `es` | Preferred output language for reports and summaries |
+
+The file also carries managed keys the tool writes itself (`schema_version`, `onboarding`, `created`, `updated`); those aren't settable directly. The schema is deliberately persona-agnostic — `role: ops-agent` is as valid as `role: CFO`, because in agent deployments the "user" is an agent with a role.
+
+**The CLI.** Everything goes through `python3 -m scripts.user_profile`:
+
+```bash
+python3 -m scripts.user_profile show [--json]            # what's stored (never errors when absent)
+python3 -m scripts.user_profile guidance [--json]        # profile -> concrete defaults
+python3 -m scripts.user_profile set role "CFO"
+python3 -m scripts.user_profile set company_size 40      # counts normalize to buckets (-> 11-50)
+python3 -m scripts.user_profile set goals --json-value '["cash-flow","cost-control"]'
+python3 -m scripts.user_profile set goals "cash-flow, cost-control"   # comma-split convenience
+python3 -m scripts.user_profile unset language
+python3 -m scripts.user_profile seed --file seed.yaml [--force]       # headless pre-seed (see Automation)
+python3 -m scripts.user_profile skip                     # record "asked, declined"
+python3 -m scripts.user_profile clear                    # forget everything
+```
+
+Exit codes: `0` ok, `1` error (validation failure, bad seed file), `2` bad arguments. Notably, `show` and `guidance` exit `0` even when no profile exists — the JSON carries `"exists": false` so machine callers can branch without treating absence as failure. Values are validated on the way in (`decision_cadence` must be one of its five values, list keys hold at most 12 entries, and so on), so a typo fails loudly at `set` time rather than corrupting the file.
+
+**What `guidance` returns, and how Claude uses it.** `guidance` is the consumption interface: it turns the stored profile into concrete defaults instead of making every session re-interpret raw keys. The free-form `role` is classified into a `role_family` (finance, accounting, production, purchasing, operations, sales, marketing, executive, or general), which selects a playbook of `default_reports` (what to lead with when asked "how are we doing?") and `default_models`. On top of that it derives: `depth` (`executive`/`balanced`/`operational` — from the role family unless `detail_preference` overrides it) with matching `phrasing` rules; a `materiality_hint` scaled by `company_size` (a starting calibration for "a notable amount" in the instance's currency, not a business rule); a `comparison_window` matching `decision_cadence`; recognized vs free-form goals; and `is_agent` — roles containing markers like *agent*, *bot*, *automation*, *headless* flag the consumer as a machine, switching phrasing to prefer `--json` outputs and structured results over conversational chrome. It also names `suggested_routines` — v2.0 routine templates that are, until v2.0 ships, names to pre-populate rather than runnable definitions. Claude runs `guidance --json` silently at session start and applies the result for the whole session; guidance sets **defaults, not restrictions** — an explicit ask always wins.
+
+**Skip and clear semantics.** These are different operations, not synonyms. `skip` records that tailoring was offered and declined (`onboarding: skipped`), and the offer is then never repeated — `guidance` reports this state so future sessions stay quiet unless the user reopens the topic themselves. `clear` deletes the file entirely, including the skip marker, so a later session may make the one-time offer again. Either way there is exactly one offer outstanding at a time: the skill asks at most three quick questions, every answer is skippable, and `pain_points` is only captured when volunteered, never interrogated.
+
+**What the user profile can never do.** `role` and everything else in this file shape *presentation* — default reports, depth, phrasing. They never widen permissions: a `role: CFO` gets no write access a read-only profile denies, and an agent-flavored role earns no exemption from a single confirmation gate. The safety model in the next section is entirely unaffected by anything stored here.
+
+Like connection profiles, the user profile does not travel between surfaces — it lives in the state dir of whichever machine captured it.
 
 ---
 
@@ -193,7 +236,7 @@ That is a genuinely useful guard against Claude accidentally calling `create` or
 So "read-only" as configured here is a statement of intent, not a proof. To turn it into a proof, run:
 
 ```bash
-python -m scripts.verify_profile <profile>
+python3 -m scripts.verify_profile <profile>
 ```
 
 This calls Odoo's `has_access` for `read`/`write`/`create`/`unlink` against a representative spread of models (`res.partner`, `sale.order`, `account.move`, `product.product`, `stock.picking`, `ir.model` by default, plus anything named in the profile's `write_policy.allow`) and never mutates anything. If a profile claims `mode: read-only` but the credential can actually write to any probed model, it exits 2 with a MISALIGNED verdict and tells you to bind the key to a genuinely restricted Odoo user instead. Exit 0 means mode and credential capability agree; exit 1 means it couldn't verify — connection failure, bad auth, or every probed model coming back inconclusive (e.g. none of them installed on that database) — and you should treat the credential as write-capable until you run it again. Run this at setup time and any time an API key changes; for a headless deployment, it belongs in your deploy pipeline (`verify_profile --json`), not something you remember to do manually after an incident.
@@ -257,7 +300,7 @@ Reading is what you'll do most with Odoo Sidekick: pulling sales, invoices, inve
 All reads (and writes) run through:
 
 ```bash
-python -m scripts.odoo_client <profile> <model> <method> --json '{...}'
+python3 -m scripts.odoo_client <profile> <model> <method> --json '{...}'
 ```
 
 `<profile>` is the name from your `profiles.yaml` (or `default`). `<model>` is the Odoo technical model name (`sale.order`, `account.move`, etc.). `<method>` is one of the whitelisted read methods below, and `--json` carries the method's named arguments as a JSON object. Read methods never need `--confirm` — that flag (and the write-confirmation flow) applies to every non-read method: `create`, `write`, `unlink`, `copy`, and arbitrary `action_*`/`button_*` calls, invoked directly by their real method name. (There's no separate `execute` verb on the CLI — that's only a convenience wrapper in the Python `OdooClient` library for calling an arbitrary method.)
@@ -267,7 +310,7 @@ python -m scripts.odoo_client <profile> <model> <method> --json '{...}'
 **`search_read`** — the workhorse for pulling records with specific fields. Returns a list of dicts; many2one fields come back as `[id, "Display Name"]` pairs.
 
 ```bash
-python -m scripts.odoo_client main sale.order search_read --json '{
+python3 -m scripts.odoo_client main sale.order search_read --json '{
   "domain": [["state","in",["sale","done"]], ["date_order",">=","2025-01-01"]],
   "fields": ["name","partner_id","amount_total","date_order","user_id"],
   "limit": 100,
@@ -278,7 +321,7 @@ python -m scripts.odoo_client main sale.order search_read --json '{
 **`read`** — like `search_read` but for a specific set of ids you already know (e.g. from a prior `search` or a user-supplied list). Pass the whole id list in one call.
 
 ```bash
-python -m scripts.odoo_client main res.partner read --json '{
+python3 -m scripts.odoo_client main res.partner read --json '{
   "ids": [42, 43, 44],
   "fields": ["name","email","credit_limit"]
 }'
@@ -287,7 +330,7 @@ python -m scripts.odoo_client main res.partner read --json '{
 **`read_group`** — the key method for analytics. It pushes aggregation to the server instead of pulling every row and summing in Python. Aggregates use `field:aggregate` syntax (`sum`, `avg`, `min`, `max`, `count`, `count_distinct`); date/datetime `groupby` fields accept `:day`, `:week`, `:month`, `:quarter`, `:year` granularity suffixes. Note `read_group` sorts with `orderby`, not `order` like `search`/`search_read`.
 
 ```bash
-python -m scripts.odoo_client main sale.order read_group --json '{
+python3 -m scripts.odoo_client main sale.order read_group --json '{
   "domain": [["state","in",["sale","done"]], ["date_order",">=","2025-01-01"]],
   "fields": ["amount_total:sum", "id:count"],
   "groupby": ["partner_id"],
@@ -301,7 +344,7 @@ This returns rows like `{"partner_id": [42, "Acme Co"], "amount_total": 128500.0
 **`search_count`** — when you only need a number, don't pull records to count them in Python.
 
 ```bash
-python -m scripts.odoo_client main res.partner search_count --json '{
+python3 -m scripts.odoo_client main res.partner search_count --json '{
   "domain": [["customer_rank",">",0], ["active","=",true]]
 }'
 ```
@@ -311,7 +354,7 @@ Returns a bare integer.
 **`fields_get`** — introspects a model's fields directly over the API (useful when you want the live field list rather than the cached reference docs, or need attributes like `selection` values).
 
 ```bash
-python -m scripts.odoo_client main crm.lead fields_get --json '{
+python3 -m scripts.odoo_client main crm.lead fields_get --json '{
   "allfields": ["stage_id","probability"],
   "attributes": ["string","type","selection"]
 }'
@@ -325,16 +368,16 @@ Don't guess technical model names. Two ways to find them:
 
 1. **Read the reference docs first.** `references/models/*.md` covers the common areas with key fields, gotchas, and worked queries: `sales.md` (sale.order, sale.order.line, crm.lead), `accounting.md` (account.move, account.move.line, account.account, account.journal), `inventory.md` (product.template/product.product, stock.quant, stock.move, stock.picking, stock.location), `manufacturing.md`, `partners.md` (res.partner), and `purchase.md`. These are the fastest path for "what field holds X" questions on models you'll query repeatedly.
 
-2. **Ask the live database when you're unsure or need something not covered.** `python -m scripts.introspect <profile> --model <name>` describes a known model's fields:
+2. **Ask the live database when you're unsure or need something not covered.** `python3 -m scripts.introspect <profile> --model <name>` describes a known model's fields:
 
 ```bash
-python -m scripts.introspect main --model sale.order
+python3 -m scripts.introspect main --model sale.order
 ```
 
 If you don't know the exact technical name, `--find` fuzzy-searches installed models by keyword (backed by a 24-hour local cache, refreshable with `--refresh`):
 
 ```bash
-python -m scripts.introspect main --find "sale order"
+python3 -m scripts.introspect main --find "sale order"
 ```
 
 A guessed model name that's wrong returns a 404 from the API — search first instead of retrying variations blind.
@@ -360,7 +403,7 @@ Watch for the recurring traps: Odoo serializes "no value" as `false`, not `null`
 **Never read `ir.attachment` file bodies inline.** Reading `ir.attachment` without a `fields` list, or with `datas`/`raw`/`db_datas` in it, returns the entire file as base64 in the JSON response, sometimes 9 MB or more in a single reply. The client actively refuses this: `odoo_client.py` detects the risk and exits with status 7 unless you pass `--allow-inline-binary`. Instead, download it to disk:
 
 ```bash
-python -m scripts.get_attachment main --id 12245 --out ./deck.pdf
+python3 -m scripts.get_attachment main --id 12245 --out ./deck.pdf
 ```
 
 This decodes the file straight to a local path and prints only metadata (name, mimetype, byte count, and a checksum comparison against Odoo's stored checksum) — never the file body. Useful flags: `--overwrite` to replace an existing output file, and `--json` for a machine-readable result. If you omit `--out`, it writes to the attachment's own (sanitized) name in the current directory.
@@ -376,7 +419,7 @@ Odoo Sidekick defaults to read-only. Writing anything to your Odoo requires a re
 Profiles are read-only unless configured otherwise. Check what you have with:
 
 ```bash
-python -m scripts.profiles list
+python3 -m scripts.profiles list
 ```
 
 If the profile you want to write against is read-only, you have three options: switch that profile's mode, use a different profile that's already read-write, or drop the write from the request. The skill will not silently upgrade a profile for you, and won't assume which of the three you want.
@@ -384,17 +427,17 @@ If the profile you want to write against is read-only, you have three options: s
 To flip an existing profile to read-write:
 
 ```bash
-python -m scripts.profiles set main mode read-write
+python3 -m scripts.profiles set main mode read-write
 ```
 
 Or add a dedicated write profile alongside your read-only one (a common pattern, since `assets/profiles.example.yaml` ships with both `main` and `main_rw` as an illustration):
 
 ```bash
-python -m scripts.profiles add main_rw --url https://your-instance.odoo.com --api-key-env ODOO_MAIN_RW_API_KEY
-python -m scripts.profiles set main_rw mode read-write
+python3 -m scripts.profiles add main_rw --url https://your-instance.odoo.com --api-key-env ODOO_MAIN_RW_API_KEY
+python3 -m scripts.profiles set main_rw mode read-write
 ```
 
-Keep in mind that `mode` is enforced by the client, before any HTTP call is made, but it is a client-side gate only. The Odoo API key retains whatever rights its Odoo user actually has. Run `python -m scripts.verify_profile <profile>` after setup (and whenever the key changes) to confirm the credential itself is as restricted as the profile claims.
+Keep in mind that `mode` is enforced by the client, before any HTTP call is made, but it is a client-side gate only. The Odoo API key retains whatever rights its Odoo user actually has. Run `python3 -m scripts.verify_profile <profile>` after setup (and whenever the key changes) to confirm the credential itself is as restricted as the profile claims.
 
 ### What counts as a write
 
@@ -448,7 +491,7 @@ Every preview, whether it's the implicit dry-run, the rich `--dry-run` diff, or 
 Say you ask "update Acme Corp's phone number to +1 555-0142" against the `main_rw` profile. Odoo Sidekick would first resolve the partner id (a normal read), then build the dry-run:
 
 ```bash
-python -m scripts.odoo_client main_rw res.partner write --json '{
+python3 -m scripts.odoo_client main_rw res.partner write --json '{
   "ids": [42], "vals": {"phone": "+1 555-0142"}
 }' --dry-run
 ```
@@ -485,7 +528,7 @@ You'd then be shown a one-row confirmation table built from that diff, something
 and asked once: proceed, cancel, or something else. On "yes, proceed", the actual write is executed:
 
 ```bash
-python -m scripts.odoo_client main_rw res.partner write --json '{
+python3 -m scripts.odoo_client main_rw res.partner write --json '{
   "ids": [42], "vals": {"phone": "+1 555-0142"}
 }' --confirm
 ```
@@ -514,7 +557,7 @@ Both backends produce the same schema (one table per model, named exactly like t
 ### Running a sync
 
 ```bash
-python -m scripts.cache_sync main --models sale.order,sale.order.line,res.partner \
+python3 -m scripts.cache_sync main --models sale.order,sale.order.line,res.partner \
     --backend duckdb --db ./cache.duckdb --incremental
 ```
 
@@ -531,18 +574,18 @@ Progress prints to stderr per model as it syncs. A failed model doesn't abort th
 
 ### What `--incremental` does
 
-On a plain run, `cache_sync` pulls every row for each model. With `--incremental`, it looks up the last-recorded `write_date` for that model in its own `_sync_state` tracking table and adds a domain filter of `write_date > last_write_date`, so only records touched since the previous sync come across. The first sync for a model always has to be a full sync (there's no prior state to diff against); `--incremental` on a never-before-synced model just does the same full pull and starts tracking from there.
+On a plain run, `cache_sync` pulls every row for each model. With `--incremental`, it looks up the last-recorded `write_date` for that model in its own `_sync_state` tracking table and adds a domain filter of `write_date >= last_write_date`, so only records touched since the previous sync come across. The comparison is deliberately `>=`, not `>`: records modified later within the boundary second would otherwise be skipped forever, and since rows are upserted by `id`, re-fetching the boundary rows is idempotent. The first sync for a model always has to be a full sync (there's no prior state to diff against); `--incremental` on a never-before-synced model just does the same full pull and starts tracking from there. Every run — including an incremental one that finds nothing new — refreshes the model's `synced_at` timestamp, so `cache_status` reports when freshness was last *verified*, and a no-change run doesn't leave the cache looking staler than it is.
 
-Two caveats worth knowing before you rely on this for anything precise: incremental sync never sees deletions (a record removed in Odoo just stays in the cache — periodically re-run without `--incremental` if that matters for a given model), and it only picks up what the API user can see, so archived records dropped from view will keep whatever version was last synced.
+Two caveats worth knowing before you rely on this for anything precise. First, **deletions are never propagated** — the sync only ever upserts, so a record removed in Odoo stays in the cache, and (contrary to what earlier editions of this manual said) a full non-incremental re-run does **not** purge it either, because a full run is just a bigger upsert. For models where deleted rows would poison an analysis, drop the model's table (or delete the whole cache DB file) and re-sync from scratch — that is the only way to purge; `references/caching_strategy.md` covers this in more depth. Second, the sync only picks up what the API user can see, so archived records dropped from view will keep whatever version was last synced.
 
 ### Checking freshness with `cache_status`
 
 Before querying cached data, check how stale it is:
 
 ```bash
-python -m scripts.cache_status --backend duckdb --db ./cache.duckdb
-python -m scripts.cache_status --backend duckdb --db ./cache.duckdb --table sale.order
-python -m scripts.cache_status --backend duckdb --db ./cache.duckdb --json
+python3 -m scripts.cache_status --backend duckdb --db ./cache.duckdb
+python3 -m scripts.cache_status --backend duckdb --db ./cache.duckdb --table sale.order
+python3 -m scripts.cache_status --backend duckdb --db ./cache.duckdb --json
 ```
 
 `cache_status` takes `--db` (required), `--backend` (`duckdb` or `sqlite`, default `duckdb`), an optional `--table` to filter to one model, and `--json` for machine-readable output. It reports, per cached model, row count, last-synced timestamp, and a human-readable age (e.g. `4h 23m`). If the file has no `_sync_state` table yet, it tells you the DB hasn't been populated by `cache_sync`.
@@ -558,7 +601,7 @@ This is where the skill decides for you, in practice, whether to bother you abou
 
 So in day-to-day use: if you synced `sale.order` this morning and ask a question ten minutes later, nothing gets asked, it just uses the cache. If it's been sitting for a day and a half, expect a quick poll ("cached data is 1d 6h old — use cached, refresh first, or something else?") before it proceeds. Once you answer, that choice sticks for the rest of the conversation, so you won't be re-asked at every turn, only if the cache crosses into a meaningfully staler band (e.g., you said "use cached" at 2 hours old but it's now 12 hours old and it matters for the query). You can also short-circuit this by stating a standing preference ("always refresh if older than 6 hours") in the session.
 
-Two exceptions to the interactive flow: in headless/autonomous deployments (`ODOO_SIDEKICK_HEADLESS=1`), there's no one to ask, so the same thresholds apply silently — cache under 24 hours old is used, older triggers a refresh, and past 7 days a staleness warning is emitted into the output instead of into chat. And these thresholds are defaults, not hard limits — if you tell the skill your own cadence ("this table only changes weekly, don't bug me under 3 days"), it's meant to adjust to that instead.
+Two exceptions to the interactive flow: in headless/autonomous deployments (`ODOO_SIDEKICK_HEADLESS=1`), there's no one to ask, so the same thresholds apply silently — cache under 24 hours old is used, older triggers a refresh, and past 7 days a staleness warning is emitted into the output instead of into chat. And these thresholds are defaults, not hard limits — if you tell the skill your own cadence ("this table only changes weekly, don't bug me under 3 days"), it's meant to adjust to that instead. A stored user profile does some of this tuning automatically: its `decision_cadence` calibrates how eagerly staleness is worth raising (a daily-cadence user cares about hours; a monthly-cadence user usually doesn't).
 
 ---
 
@@ -577,7 +620,7 @@ export ODOO_SIDEKICK_HEADLESS=1
 `scripts/detect_env.py` checks this first, before any surface-sniffing, and if it is set to `1`, `true`, or `yes` (case-insensitive) it reports `"environment": "headless"` unconditionally, regardless of what filesystem or sandbox markers are present. This is a deliberate override: the same host can serve both interactive and scheduled runs, and the operator's declaration always wins over inference. Run it once at the top of any scheduled job so downstream logic (yours or Claude's) can branch on it:
 
 ```bash
-python -m scripts.detect_env --json
+python3 -m scripts.detect_env --json
 ```
 
 ### What changes in headless mode
@@ -585,7 +628,7 @@ python -m scripts.detect_env --json
 Per SKILL.md's "Headless / autonomous operation" section, a headless run drops every conversational behavior and replaces it with machine-checkable contracts:
 
 - **No onboarding, no welcome-back, no attribution, no cache-staleness questions.** These are chat conventions with nothing to render to. Staleness thresholds are still applied, just silently and with fixed defaults: use cached data if under 24 hours old, refresh if older, and if the cache is older than 7 days also emit a staleness warning in the output itself rather than asking anyone.
-- **Everything talks JSON.** `detect_env`, `check_updates`, `show_metrics`, `cache_status`, `introspect`, `selftest`, `verify_profile`, `get_attachment`, and `profiles list`/`show` all take `--json`. The client CLI (`scripts/odoo_client.py`) is a partial exception: its `--json` flag is the *input* payload of method arguments, not an output toggle — for machine-parseable **error** output on failures, add `--json-errors` alongside it. Confirmed by `python -m scripts.odoo_client --help`, which shows both flags independently.
+- **Everything talks JSON.** `detect_env`, `check_updates`, `show_metrics`, `cache_status`, `introspect`, `selftest`, `verify_profile`, `get_attachment`, `profiles list`/`show`, and `user_profile show`/`guidance` all take `--json`. The client CLI (`scripts/odoo_client.py`) is a partial exception: its `--json` flag is the *input* payload of method arguments, not an output toggle — for machine-parseable **error** output on failures, add `--json-errors` alongside it. Confirmed by `python3 -m scripts.odoo_client --help`, which shows both flags independently.
 - **Exit codes are the contract.** A headless caller should branch on the process exit code rather than parsing prose. Verified directly against `_cli()` in `scripts/odoo_client.py`:
 
   | Code | Meaning | Raised when |
@@ -628,12 +671,39 @@ ops_agent:
   # confirm_cmd: "/opt/approvals/check-odoo-write"
 ```
 
+### Pre-seeding user context
+
+The interactive tailoring questions (see **The user profile** in the setup chapter) never run headless — like all conversational chrome, there's no one to answer them. If you want a headless agent to benefit from role-aware defaults anyway, pre-seed the user profile from a file at deploy time:
+
+```bash
+python3 -m scripts.user_profile seed --file ops_agent_profile.yaml
+```
+
+`assets/user_profile.example.yaml` in the skill directory is the template. A minimal seed for an operations agent looks like:
+
+```yaml
+role: ops-agent
+company_size: 11-50
+goals:
+  - throughput
+  - operational-efficiency
+pain_points:
+  - late component deliveries stall MOs
+decision_cadence: daily
+```
+
+Every key is optional — set only what you know. `seed` validates the file (unknown keys are rejected, values are normalized exactly as with `set`), marks the profile `onboarding: seeded`, and refuses to overwrite an existing profile unless you pass `--force`, so a redeploy can't silently clobber context an agent has accumulated. The seed file may be YAML (needs PyYAML) or JSON (needs nothing — JSON is valid YAML); if it isn't valid JSON and PyYAML isn't installed, the error says exactly that and offers both ways out. `detect_env --json` in headless mode includes a recommendation to pre-seed, plus `user_profile_path`/`user_profile_exists` fields so your deploy tooling can check whether it already happened.
+
+Consumption is the same as everywhere else — `python3 -m scripts.user_profile guidance --json` — and an agent-flavored `role` sets `"is_agent": true` in the result, which flips the phrasing guidance toward structured, `--json`-first output. No seed means generic defaults, applied silently; a headless run never prompts about tailoring, ever.
+
+One thing you get for free: because `user_profile.yaml` lives in the state dir, the per-agent `ODOO_SIDEKICK_STATE_DIR` isolation described below isolates user profiles too — each agent in a fleet can carry its own role and goals without any extra wiring.
+
 ### Running multiple agents
 
 Two environment variables let you fan a fleet of agents out against Odoo without their audit trails or state colliding:
 
-- **`ODOO_SIDEKICK_CALLER`** — an identity string (e.g. `ops-agent-3`) stamped on every call-log record for that process. On a shared host running several agents, set a distinct caller per agent so `python -m scripts.show_metrics --by-caller` gives you a real per-agent breakdown instead of one undifferentiated stream.
-- **`ODOO_SIDEKICK_STATE_DIR`** — moves the default location of the call log, `introspect`'s local model-name cache, and the profiles file itself (as `<state_dir>/profiles.yaml`) for that process. (This does not affect `cache_sync`/`cache_status`'s DuckDB/SQLite data cache — that always lives wherever `--db` points, independent of the state dir.) Give each agent its own state dir for full isolation, or point several agents at the same one deliberately if you want a single shared audit log (in which case, set `ODOO_SIDEKICK_CALLER` on each so entries stay attributable). `ODOO_PROFILES_PATH` always takes precedence over the state-dir-derived path when set, so pinning it explicitly per deployment ensures scheduled runs resolve exactly the same profile config as interactive ones do.
+- **`ODOO_SIDEKICK_CALLER`** — an identity string (e.g. `ops-agent-3`) stamped on every call-log record for that process. On a shared host running several agents, set a distinct caller per agent so `python3 -m scripts.show_metrics --by-caller` gives you a real per-agent breakdown instead of one undifferentiated stream.
+- **`ODOO_SIDEKICK_STATE_DIR`** — moves the default location of the call log, `introspect`'s local model-name cache, `check_updates`' cached result (`update_check.json`), the user profile (`user_profile.yaml`), and the profiles file itself (as `<state_dir>/profiles.yaml`) for that process. (This does not affect `cache_sync`/`cache_status`'s DuckDB/SQLite data cache — that always lives wherever `--db` points, independent of the state dir.) Give each agent its own state dir for full isolation, or point several agents at the same one deliberately if you want a single shared audit log (in which case, set `ODOO_SIDEKICK_CALLER` on each so entries stay attributable). `ODOO_PROFILES_PATH` always takes precedence over the state-dir-derived path when set, so pinning it explicitly per deployment ensures scheduled runs resolve exactly the same profile config as interactive ones do.
 
 ### The one rule that matters most
 
@@ -641,7 +711,7 @@ An agent must never fabricate an `auth_ref` or add `--confirm` just to make an e
 
 ### What's here today vs. what's coming
 
-There is no built-in scheduler or routine registry yet. What ships today is the set of CLI scripts described in this manual (`odoo_client`, `cache_sync`, `show_metrics`, `cache_status`, `verify_profile`, `selftest`, and friends) plus whatever external scheduler you bring — cron, a CI pipeline, launchd, Task Scheduler, or an orchestration platform's own scheduler. A registry of named, YAML-defined routines (schedule, queries, output template, alert thresholds) executed by a dedicated `routine_runner.py` is on the roadmap for v2.0, but is not implemented in the shipped v1.8 skill.
+There is no built-in scheduler or routine registry yet. What ships in v1.9 is the set of CLI scripts described in this manual (`odoo_client`, `cache_sync`, `show_metrics`, `cache_status`, `verify_profile`, `selftest`, `user_profile`, and friends) plus whatever external scheduler you bring — cron, a CI pipeline, launchd, Task Scheduler, or an orchestration platform's own scheduler. A registry of named, YAML-defined routines (schedule, queries, output template, alert thresholds) executed by a dedicated `routine_runner.py` is on the roadmap for v2.0 — and it will build on the user profile that v1.9 already stores: `guidance` already emits `suggested_routines` (e.g. `morning-checkin-cfo`, `operations-standup`) matched to the stored role, which today are names to pre-populate a future routine registry with, not runnable definitions. Capturing or seeding a user profile now means the v2.0 routines will have something to tailor themselves to on day one.
 
 ---
 
@@ -655,23 +725,24 @@ Odoo Sidekick's client never fails silently and never papers over an error. On e
 
 | Problem | What you'll see | Fix |
 |---|---|---|
-| Bad or missing API key | `401` on any call | Check the profile's `api_key`. If it uses `${ENV_VAR}` substitution, confirm the variable is actually set in **this** shell session: `echo $ODOO_MAIN_API_KEY` (or run `python -m scripts.selftest --profile <profile>`, which checks this for you). |
-| Wrong model name | `404`, server message contains "does not exist" and "model" | Never guess a second time. Run `python -m scripts.introspect <profile> --find <word>` to fuzzy-search the installed models, then use the exact name it returns. |
-| Wrong field name | `422`/`500` with `Invalid field '<name>'` | Run `python -m scripts.introspect <profile> --model <model>` to list the real fields. Odoo 19 renamed several common ones (`groups_id` → `group_ids`, `kanban_state` removed, `is_close` → `fold`) — check `references/odoo19_field_changes.md`. |
+| Bad or missing API key | `401` on any call | Check the profile's `api_key`. If it uses `${ENV_VAR}` substitution, confirm the variable is actually set in **this** shell session: `echo $ODOO_MAIN_API_KEY` (or run `python3 -m scripts.selftest --profile <profile>`, which checks this for you). |
+| Wrong model name | `404`, server message contains "does not exist" and "model" | Never guess a second time. Run `python3 -m scripts.introspect <profile> --find <word>` to fuzzy-search the installed models, then use the exact name it returns. |
+| Wrong field name | `422`/`500` with `Invalid field '<name>'` | Run `python3 -m scripts.introspect <profile> --model <model>` to list the real fields. Odoo 19 renamed several common ones (`groups_id` → `group_ids`, `kanban_state` removed, `is_close` → `fold`) — check `references/odoo19_field_changes.md`. |
 | `vals` vs `vals_list` on `create`, or `orderby` vs `order` on `search`/`search_read` | Used to be a 422 ("missing a required argument: 'vals_list'") or an "unexpected keyword argument" error | The client handles this for you now: `create` accepts `vals` and normalizes it to `vals_list` (wrapping a bare dict into a one-item list), and `search`/`search_read` accept `orderby` and rename it to `order`. You shouldn't need to work around this anymore, but if you're calling the Odoo API directly (bypassing this client), the traps still apply. |
 | Validation error on write | `422`, or any status with `error_name` ending `ValidationError` | Odoo rejected the values against a business rule (required field missing, broken constraint, etc.). The server message names the field or constraint — fix the payload. Don't retry unchanged. |
 | Transient server error | `429`, `502`, `503`, `504`, or a non-deterministic `500` | For **reads**, the client already retried automatically (exponential backoff + jitter, default up to 2 retries — tune with `ODOO_SIDEKICK_MAX_RETRIES` or the CLI's `--retries`). If you're still seeing the error, retries were exhausted; wait and try again, or check the Odoo host's status. Writes are never auto-retried (a 502/504 can mask a transaction that actually committed), so a write that errors this way needs you to check server-side whether it went through before resending. |
 | `403` / `AccessError` | Read or write refused by Odoo ACLs | If the message names a specific field, the API user has row access but lacks field-level access to that field — drop it from `fields` and retry. Otherwise the API user's Odoo group membership needs adjusting (Settings → Users). |
+| YAML-authored profiles file, PyYAML not installed | `ProfileError: Profile file at ... is not valid JSON, and PyYAML is not installed` | Either `pip install pyyaml` (after which `python3 -m scripts.profiles migrate` can convert the file to canonical JSON so PyYAML is no longer needed at all), or re-create the config with `python3 -m scripts.profiles add`, which writes JSON directly. The same applies to a YAML `user_profile` seed file: install PyYAML or write the seed as JSON (JSON is valid YAML). |
 
 ### Client-side refusals: exit codes
 
-These come from `scripts/odoo_client.py`'s CLI (`python -m scripts.odoo_client ...`) and mean nothing was sent to Odoo — the client refused before making the HTTP call. Each has exactly one correct response:
+These come from `scripts/odoo_client.py`'s CLI (`python3 -m scripts.odoo_client ...`) and mean nothing was sent to Odoo — the client refused before making the HTTP call. Each has exactly one correct response:
 
 | Exit code | Meaning | What to do |
 |---|---|---|
 | `3` | Refused: `mode` (read-only profile) or `write_policy` forbids this model/method | The profile is doing its job. Tell the user instead of silently switching profiles. If writes are genuinely needed, either switch to a read-write profile (with the user's knowledge) or use a different profile — don't work around it. |
 | `6` | Refused: profile has `require_auth_ref: true` and no auth reference was supplied | Supply a real ticket/approval id with `--auth-ref <id>` (or `ODOO_SIDEKICK_AUTH_REF`), or ask the user for one if you don't have it. Never fabricate one — a made-up reference defeats the point of the audit trail. |
-| `7` | Refused: inline binary read on `ir.attachment` (`datas`/`raw`/`db_datas`, or no `fields` filter at all) | Use `python -m scripts.get_attachment <profile> --id <id> --out <file>` to decode to disk instead. (`--allow-inline-binary` exists to override this, but avoid it — the whole point is keeping multi-MB base64 blobs out of the conversation.) |
+| `7` | Refused: inline binary read on `ir.attachment` (`datas`/`raw`/`db_datas`, or no `fields` filter at all) | Use `python3 -m scripts.get_attachment <profile> --id <id> --out <file>` to decode to disk instead. (`--allow-inline-binary` exists to override this, but avoid it — the whole point is keeping multi-MB base64 blobs out of the conversation.) |
 | `8` | Refused: the profile's `confirm_cmd` hook rejected the write (nonzero exit, or it timed out) | This is an answer, not a bug. Report to the user that the operator's approval hook declined the write, and stop — do not retry, and do not try to work around the hook. |
 
 For completeness, the other exit codes you'll see from the same CLI: `0` success, `1` generic client error (e.g. profile/config problems), `2` bad CLI arguments, `4` an Odoo API error (4xx/5xx passed through from the server), `5` an unconfirmed write preview (you called a write method without `--confirm` — this is the built-in dry-run, not a failure).
@@ -683,14 +754,14 @@ A meaningful share of "wrong field" and "wrong argument" errors are specific to 
 One entry worth calling out explicitly because it's easy to miss: **`message_post` double-escapes HTML unless you pass `body_is_html: true`.** Without it, markup in `body` gets escaped into literal `&lt;p&gt;` text that shows up wrong in the chatter and has to be fixed by hand. Always post HTML-bearing chatter messages like this:
 
 ```bash
-python -m scripts.odoo_client <profile> res.partner message_post --json '{
+python3 -m scripts.odoo_client <profile> res.partner message_post --json '{
   "ids": [42], "body": "<p>Approved per KIN-7902</p>", "body_is_html": true
 }' --confirm
 ```
 
 ### When nothing else works
 
-1. Re-run `python -m scripts.selftest --profile <profile>` (add `--json` for a machine-readable result). It checks the install is complete, the profile file parses, every `${ENV_VAR}` the profile references is actually set in the current shell, and connectivity works — and names the specific piece that's failing rather than giving a generic error.
+1. Re-run `python3 -m scripts.selftest --profile <profile>` (add `--json` for a machine-readable result). It checks the install is complete, the profile file parses, every `${ENV_VAR}` the profile references is actually set in the current shell, and connectivity works — and names the specific piece that's failing rather than giving a generic error.
 2. Double-check environment variables are loaded in the **current** shell. A common failure mode is setting the API key's env var in one terminal session (or sourcing a `.env` file) and then running the skill from a different shell or subprocess where it was never exported — `echo $ODOO_MAIN_API_KEY` (or the equivalent for your profile's variable name) should show the real value, not blank.
 3. If you're still stuck after that, reach out to SHIFTcollective at [info@shiftcollective.co](mailto:info@shiftcollective.co) — they built and maintain the skill.
 
@@ -698,14 +769,14 @@ python -m scripts.odoo_client <profile> res.partner message_post --json '{
 
 ## Command Reference
 
-Every script is invoked as a Python module from the skill's root directory (`python -m scripts.<name> ...`), never as a standalone file. Run any of them with `-h`/`--help` to see the live signature; this reference mirrors that output.
+Every script is invoked as a Python module from the skill's root directory (`python3 -m scripts.<name> ...`), never as a standalone file. Run any of them with `-h`/`--help` to see the live signature; this reference mirrors that output.
 
 ### odoo_client — the read/write API client
 
 One-line: send a single JSON-2 API call (read or write) to an Odoo profile, with write-safety gates built in.
 
 ```
-python -m scripts.odoo_client [--json JSON_ARGS] [--confirm] [--dry-run]
+python3 -m scripts.odoo_client [--json JSON_ARGS] [--confirm] [--dry-run]
     [--auth-ref AUTH_REF] [--retries RETRIES] [--timeout TIMEOUT]
     [--json-errors] [--allow-inline-binary] [--pretty]
     profile model method
@@ -718,20 +789,20 @@ python -m scripts.odoo_client [--json JSON_ARGS] [--confirm] [--dry-run]
 - `--auth-ref AUTH_REF` — authorization reference recorded in the call log with the write (needed when the profile sets `require_auth_ref: true`).
 - `--retries RETRIES` — max retries for transient read failures (default: `ODOO_SIDEKICK_MAX_RETRIES` env var, or 2). Writes never auto-retry.
 - `--timeout TIMEOUT` — HTTP timeout in seconds (default 60).
-- `--json-errors` — on API errors, also print a machine-readable JSON error object to stdout.
+- `--json-errors` — print a machine-readable JSON error object to stdout on failures: API errors (exit 4), generic client errors (exit 1), and client-side refusals — mode/`write_policy` refusals (exit 3) and a missing auth-ref (exit 6) — so headless callers get structured output on every refusal path, not just server errors. (Exits 5 and 8 already print a JSON preview of the refused write to stdout regardless of this flag.)
 - `--allow-inline-binary` — allow inlining base64 attachment bodies (`ir.attachment` `datas`/`raw`); otherwise these are refused in favor of `get_attachment.py`.
 - `--pretty` — pretty-print the JSON result.
 
 Notable exit codes: `0` success, `1` generic client error, `2` bad `--json`, `3` write refused (read-only profile or `write_policy`), `4` Odoo API error, `5` write not confirmed (dry-run preview printed), `6` `--auth-ref` required but missing, `7` inline-binary read refused, `8` a profile's `confirm_cmd` hook rejected the write.
 
 ```bash
-python -m scripts.odoo_client main sale.order read_group --json '{
+python3 -m scripts.odoo_client main sale.order read_group --json '{
   "domain": [["state","in",["sale","done"]]],
   "fields": ["amount_total:sum"],
   "groupby": ["partner_id"]
 }' --pretty
 
-python -m scripts.odoo_client main_rw res.partner write \
+python3 -m scripts.odoo_client main_rw res.partner write \
     --json '{"ids": [7, 8], "vals": {"credit_limit": 5000}}' \
     --confirm --auth-ref TICKET-123
 ```
@@ -741,7 +812,7 @@ python -m scripts.odoo_client main_rw res.partner write \
 One-line: list installed models, fuzzy-search for one, or describe a model's fields, against a live connection.
 
 ```
-python -m scripts.introspect (--list-models | --find QUERY | --model MODEL)
+python3 -m scripts.introspect (--list-models | --find QUERY | --model MODEL)
     [--pattern PATTERN] [--attrs ATTRS] [--refresh] [--json]
     profile
 ```
@@ -749,8 +820,8 @@ python -m scripts.introspect (--list-models | --find QUERY | --model MODEL)
 `--list-models`, `--find`, and `--model` are mutually exclusive (exactly one required). `--pattern` filters `--list-models` output by an `ilike` name pattern. `--attrs` (only with `--model`) is a comma-separated list of field attributes to show, defaulting to `string,type,required,readonly,store,help,relation,selection`. `--find` uses a local 24-hour model-list cache; `--refresh` bypasses it.
 
 ```bash
-python -m scripts.introspect main --find invoice
-python -m scripts.introspect main --model res.partner --attrs type,required,relation --json
+python3 -m scripts.introspect main --find invoice
+python3 -m scripts.introspect main --model res.partner --attrs type,required,relation --json
 ```
 
 ### profiles — manage the profiles config file
@@ -758,26 +829,58 @@ python -m scripts.introspect main --model res.partner --attrs type,required,rela
 One-line: the safe, validated, atomic way to read and edit `profiles.yaml`/`profiles.json` (never hand-edit the file).
 
 ```
-python -m scripts.profiles [--file FILE] {list,show,add,set,unset,remove,set-default,migrate} ...
+python3 -m scripts.profiles [--file FILE] {list,show,add,set,unset,remove,set-default,migrate} ...
 ```
 
-`--file FILE` overrides the profiles path (default: `ODOO_PROFILES_PATH` env var, or `~/.config/odoo-sidekick/profiles.yaml`). Subcommands:
+`--file FILE` overrides the profiles path (default: `ODOO_PROFILES_PATH` env var, or `<state_dir>/profiles.yaml` — `~/.config/odoo-sidekick/` unless `ODOO_SIDEKICK_STATE_DIR` moves it). Subcommands:
 
 | Subcommand | Signature | Notes |
 |---|---|---|
 | `list` | `[--json]` | Lists profiles (name, mode, url, flags); never prints keys. |
-| `show` | `name [--json]` | Shows one profile with `api_key` redacted. |
+| `show` | `name [--json]` | Shows one profile with `api_key` redacted; human-readable by default, `--json` for a machine-readable object. |
 | `add` | `name --url URL [--api-key API_KEY] [--api-key-env API_KEY_ENV] [--mode {read-only,read-write}] [--database DATABASE]` | Creates a new profile. |
 | `set` | `name key [value] [--json-value JSON_VALUE]` | Sets one key; use `--json-value` for structured keys like `write_policy` or `default_context`. |
 | `unset` | `name key` | Removes an optional key. |
-| `remove` | `name` | Deletes a profile. |
+| `remove` | `name` | Deletes a profile; refuses (before touching the file) to remove the last remaining one. |
 | `set-default` | `name` | Sets the default profile. |
 | `migrate` | (none) | Rewrites the file as canonical JSON. |
 
 ```bash
-python -m scripts.profiles list --json
-python -m scripts.profiles add ops_agent --url https://acme.odoo.com --api-key-env ODOO_OPS_API_KEY --mode read-write
-python -m scripts.profiles set ops_agent require_auth_ref --json-value true
+python3 -m scripts.profiles list --json
+python3 -m scripts.profiles add ops_agent --url https://acme.odoo.com --api-key-env ODOO_OPS_API_KEY --mode read-write
+python3 -m scripts.profiles set ops_agent require_auth_ref --json-value true
+```
+
+### user_profile — capture and serve user context
+
+One-line: stores who is using the skill (role, company size, goals, cadence) at `<state_dir>/user_profile.yaml` and derives concrete session defaults from it; preferences only, never credentials, and never a permissions widener.
+
+```
+python3 -m scripts.user_profile [--file FILE]
+    {show,guidance,set,unset,seed,skip,clear} ...
+```
+
+`--file FILE` overrides the profile path (default: `<state_dir>/user_profile.yaml`, following `ODOO_SIDEKICK_STATE_DIR`). Subcommands:
+
+| Subcommand | Signature | Notes |
+|---|---|---|
+| `show` | `[--json]` | Prints the stored profile. Exits `0` even when none exists (`"exists": false` in JSON). |
+| `guidance` | `[--json]` | Derives concrete defaults: `role_family`, `depth`, `materiality_hint`, `comparison_window`, `default_reports`/`default_models`, `phrasing`, `is_agent`, `suggested_routines`. Exits `0` with `"exists": false` plus a hint when no profile is stored. |
+| `set` | `key [value] [--json-value JSON_VALUE]` | Sets one key, validated and normalized (counts → size buckets, cadence enums checked); use `--json-value` for the list keys `goals`/`pain_points` (a plain comma-separated string also works). |
+| `unset` | `key` | Removes one key; a no-op (exit `0`) if it wasn't set. |
+| `seed` | `--file FILE [--force]` | Pre-seeds the whole profile from a YAML/JSON file (template: `assets/user_profile.example.yaml`); refuses to overwrite an existing profile without `--force`; marks `onboarding: seeded`. |
+| `skip` | (none) | Records that tailoring was offered and declined, so it is never offered again. |
+| `clear` | (none) | Deletes the file entirely, skip marker included. |
+
+Settable keys: `role`, `company_size`, `goals`, `pain_points`, `decision_cadence`, `detail_preference`, `language` — all optional; see **The user profile** in the setup chapter for values and what each drives. Writes take the same advisory lock and atomic-write path as `profiles.py`, and the canonical on-disk format is likewise JSON (valid YAML, loads without PyYAML).
+
+Exit codes: `0` ok (including `show`/`guidance` with no profile present), `1` error (validation failure, bad or conflicting seed file), `2` bad arguments.
+
+```bash
+python3 -m scripts.user_profile set role "Operations Director"
+python3 -m scripts.user_profile set goals --json-value '["throughput","cost-control"]'
+python3 -m scripts.user_profile guidance --json
+python3 -m scripts.user_profile seed --file ops_agent_profile.yaml --force
 ```
 
 ### verify_profile — prove what a credential can actually do
@@ -785,14 +888,14 @@ python -m scripts.profiles set ops_agent require_auth_ref --json-value true
 One-line: probes the live server (read-only `has_access` checks, never mutates) to confirm whether a profile's key is actually as restricted as its declared `mode`.
 
 ```
-python -m scripts.verify_profile [--models MODELS] [--json] profile
+python3 -m scripts.verify_profile [--models MODELS] [--json] profile
 ```
 
 `--models MODELS` is a comma-separated list of models to probe (default: a representative spread across common Odoo models). Exits non-zero (2) with guidance when a profile declared `mode: read-only` is found to hold a write-capable key ("MISALIGNED").
 
 ```bash
-python -m scripts.verify_profile main
-python -m scripts.verify_profile main --models sale.order,res.partner --json
+python3 -m scripts.verify_profile main
+python3 -m scripts.verify_profile main --models sale.order,res.partner --json
 ```
 
 ### get_attachment — download attachment bodies to disk
@@ -800,13 +903,13 @@ python -m scripts.verify_profile main --models sale.order,res.partner --json
 One-line: fetches an `ir.attachment` and writes its decoded content to a local file, so binary blobs never land in chat context.
 
 ```
-python -m scripts.get_attachment --id ID [--out OUT] [--overwrite] [--json] profile
+python3 -m scripts.get_attachment --id ID [--out OUT] [--overwrite] [--json] profile
 ```
 
 `--id ID` (required) is the `ir.attachment` id. `--out OUT` defaults to the attachment's stored filename in the current directory. `--overwrite` allows replacing an existing output file.
 
 ```bash
-python -m scripts.get_attachment main --id 4821 --out ./invoice.pdf
+python3 -m scripts.get_attachment main --id 4821 --out ./invoice.pdf
 ```
 
 ### cache_sync — mirror Odoo models into a local DB
@@ -814,14 +917,14 @@ python -m scripts.get_attachment main --id 4821 --out ./invoice.pdf
 One-line: one-way sync of chosen Odoo models into a local DuckDB or SQLite file for offline/cross-model analysis; it only ever calls read methods.
 
 ```
-python -m scripts.cache_sync --models MODELS [--backend {duckdb,sqlite}] --db DB
+python3 -m scripts.cache_sync --models MODELS [--backend {duckdb,sqlite}] --db DB
     [--incremental] [--page-size PAGE_SIZE] [--include-binary] profile
 ```
 
-`--models` (required) is a comma-separated list of Odoo model names. `--db` (required) is the path to the local DB file. `--backend` defaults to `duckdb`. `--incremental` only fetches records with `write_date` after the last sync. `--page-size` defaults to 1000. `--include-binary` opts into syncing binary fields, which are skipped by default because they're huge.
+`--models` (required) is a comma-separated list of Odoo model names. `--db` (required) is the path to the local DB file. `--backend` defaults to `duckdb`. `--incremental` only fetches records with `write_date >= ` the last-synced boundary (inclusive so same-second edits are never lost; the by-`id` upsert makes boundary re-fetches idempotent), and every run — even one that finds no changes — refreshes the model's `synced_at`. Deletions are never propagated (upsert-only; drop the table or DB file to purge). `--page-size` defaults to 1000. `--include-binary` opts into syncing binary fields, which are skipped by default because they're huge.
 
 ```bash
-python -m scripts.cache_sync main --models sale.order,sale.order.line \
+python3 -m scripts.cache_sync main --models sale.order,sale.order.line \
     --backend duckdb --db ./cache.duckdb --incremental
 ```
 
@@ -830,13 +933,13 @@ python -m scripts.cache_sync main --models sale.order,sale.order.line \
 One-line: reports which models are cached in a given DB file, when each was last synced, how stale it is, and row counts.
 
 ```
-python -m scripts.cache_status --db DB [--backend {duckdb,sqlite}] [--table TABLE] [--json]
+python3 -m scripts.cache_status --db DB [--backend {duckdb,sqlite}] [--table TABLE] [--json]
 ```
 
-`--db` is required. `--backend` defaults to `duckdb`. `--table` restricts the report to one Odoo model.
+`--db` is required and must point at an existing cache file: a freshness check against a missing path refuses with a clear message instead of silently creating an empty sqlite file (or dying in a raw DuckDB traceback) as a side effect. `--backend` defaults to `duckdb`. `--table` restricts the report to one Odoo model; if that model isn't in the cache, the output names it, lists which models *are* cached, and prints the exact `cache_sync` command that would add it.
 
 ```bash
-python -m scripts.cache_status --db ./cache.duckdb --table sale.order --json
+python3 -m scripts.cache_status --db ./cache.duckdb --table sale.order --json
 ```
 
 ### detect_env — report the Claude runtime environment
@@ -844,13 +947,13 @@ python -m scripts.cache_status --db ./cache.duckdb --table sale.order --json
 One-line: detects which Claude runtime/environment the skill is running in and prints constraints and recommendations relevant to that context.
 
 ```
-python -m scripts.detect_env [--json]
+python3 -m scripts.detect_env [--json]
 ```
 
-No required arguments; `--json` switches from human-readable text to JSON.
+No required arguments; `--json` switches from human-readable text to JSON. Besides the surface, sandbox, and config-path fields, the report includes `user_profile_path` and `user_profile_exists` (whether v1.9 tailoring context has been captured on this machine), and in headless mode its recommendations include pre-seeding the user profile with `user_profile seed --file` since the tailoring questions never run headless.
 
 ```bash
-python -m scripts.detect_env --json
+python3 -m scripts.detect_env --json
 ```
 
 ### check_updates — check for a newer skill release
@@ -858,14 +961,14 @@ python -m scripts.detect_env --json
 One-line: checks upstream for a newer Odoo Sidekick release, using a cached result unless told otherwise.
 
 ```
-python -m scripts.check_updates [--force] [--json]
+python3 -m scripts.check_updates [--force] [--json]
 ```
 
-`--force` bypasses the cache for a fresh check. `--json` gives machine-readable output.
+`--force` bypasses the cache for a fresh check. `--json` gives machine-readable output. The cached result lives at `<state_dir>/update_check.json` (following `ODOO_SIDEKICK_STATE_DIR`). Even on a cache hit, `update_available` is recomputed against the *current* local `VERSION` file rather than replayed from the cache — so after a `git pull` the tool stops announcing an update you already have, without waiting for the cache to expire or needing `--force`.
 
 ```bash
-python -m scripts.check_updates
-python -m scripts.check_updates --force --json
+python3 -m scripts.check_updates
+python3 -m scripts.check_updates --force --json
 ```
 
 ### show_metrics — summarize API call metrics
@@ -873,15 +976,15 @@ python -m scripts.check_updates --force --json
 One-line: summarizes Odoo API call metrics from the per-call log (counts, timing, grouping) for a session or time window.
 
 ```
-python -m scripts.show_metrics [--since SINCE] [--last LAST]
+python3 -m scripts.show_metrics [--since SINCE] [--last LAST]
     [--by-method] [--by-model] [--by-caller] [--json]
 ```
 
-`--since` accepts a relative window (`5m`, `1h`, `2d`) or an ISO timestamp. `--last N` limits to the last N calls. `--by-method`, `--by-model`, and `--by-caller` each add a grouped breakdown (`--by-caller` groups by the `ODOO_SIDEKICK_CALLER` identity). With no filters it defaults to the last 100 calls.
+`--since` accepts a relative window (`5m`, `1h`, `2d`) or an ISO timestamp; anything else is rejected up front with a clean argparse error (exit `2`) naming both accepted forms, instead of a traceback. `--last N` limits to the last N calls. `--by-method`, `--by-model`, and `--by-caller` are **mutually exclusive** — each selects one grouped breakdown (`--by-caller` groups by the `ODOO_SIDEKICK_CALLER` identity), and passing two of them is an argument error. With no filters it defaults to the last 100 calls. The log itself is `<state_dir>/call_log.jsonl` plus rotated `call_log-*.jsonl` archives (state dir follows `ODOO_SIDEKICK_STATE_DIR`); malformed or hand-edited log lines, and lines without a parseable timestamp, are skipped rather than crashing the summary.
 
 ```bash
-python -m scripts.show_metrics --since 1h --by-model
-python -m scripts.show_metrics --last 20 --json
+python3 -m scripts.show_metrics --since 1h --by-model
+python3 -m scripts.show_metrics --last 20 --json
 ```
 
 ---
@@ -889,10 +992,10 @@ python -m scripts.show_metrics --last 20 --json
 ## Tips and Best Practices
 
 - **Default every profile to read-only, and only flip specific profiles to `read-write` when a real workflow needs it.** `mode: read-only` is already the default `scripts/profiles.py` writes for new profiles; keep it that way unless you have a concrete write use case, and give that use case its own narrowly scoped profile rather than upgrading your everyday one.
-- **Bind read-only profiles to genuinely restricted Odoo API users, not just a read-only label.** The profile's `mode` is a client-side gate, not a security boundary, since it only binds code going through this client. Run `python -m scripts.verify_profile <name>` after setting up any profile (and periodically thereafter) to have Odoo itself confirm what the credential can do; it exits `2` with remediation steps if a "read-only" profile is actually holding a write-capable key.
+- **Bind read-only profiles to genuinely restricted Odoo API users, not just a read-only label.** The profile's `mode` is a client-side gate, not a security boundary, since it only binds code going through this client. Run `python3 -m scripts.verify_profile <name>` after setting up any profile (and periodically thereafter) to have Odoo itself confirm what the credential can do; it exits `2` with remediation steps if a "read-only" profile is actually holding a write-capable key.
 - **Keep API keys out of chat.** Load them from a `.env` file into your shell environment (`export ODOO_MAIN_API_KEY=...`) rather than pasting them into the conversation. Conversation history is long-lived across sessions, devices, and exports, even in an otherwise-ephemeral sandbox, so a key typed into chat effectively never goes away.
 - **Use `--dry-run` before any consequential write.** For a `write` call it fetches the current field values and prints a before/after diff per record; for `create` it previews the (redacted) records that would be created; for `unlink` and for action/button calls it fetches and lists the target records so you can see exactly what would be affected. None of this sends anything to Odoo. Pair it with `--confirm` only once you're satisfied with the preview.
-- **Check `show_metrics` after any heavy session.** `python -m scripts.show_metrics --since 1h` (or `--by-method`, `--by-model`, `--by-caller`, `--json`) summarizes the per-call log so you can spot retry storms, unexpectedly large read volumes, or writes you didn't expect, before they become a surprise later. On shared or multi-agent hosts, set `ODOO_SIDEKICK_CALLER` per agent so `--by-caller` breakdowns stay meaningful.
+- **Check `show_metrics` after any heavy session.** `python3 -m scripts.show_metrics --since 1h` (or `--by-method`, `--by-model`, `--by-caller`, `--json`) summarizes the per-call log so you can spot retry storms, unexpectedly large read volumes, or writes you didn't expect, before they become a surprise later. On shared or multi-agent hosts, set `ODOO_SIDEKICK_CALLER` per agent so `--by-caller` breakdowns stay meaningful.
 - **Treat cache staleness prompts as a real decision, not a formality.** If you're pulling from the DuckDB/SQLite cache, a stale table (especially anything older than 7 days) is flagged for a reason; refresh with `cache_sync` before trusting a report that matters.
 
 ## Licensing
@@ -911,7 +1014,7 @@ The skill's source, and its release history, live in the upstream GitHub reposit
 Before reaching out, run the built-in self-check first:
 
 ```
-python -m scripts.check_updates
+python3 -m scripts.check_updates
 ```
 
 This compares your local `VERSION` file against the upstream repository (with a 24-hour cache, so repeated calls don't hammer GitHub) and tells you whether a newer release is available, along with a link to its release notes. Pass `--force` to bypass the cache for a fresh check, or `--json` for machine-readable output. If you're debugging something odd, it's worth confirming you're on the latest version before digging further, since the bug you're hitting may already be fixed upstream.

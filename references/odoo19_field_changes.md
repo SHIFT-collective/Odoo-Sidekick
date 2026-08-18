@@ -23,7 +23,7 @@ verified against a live Odoo 19.0 enterprise instance.
 | `name_get()` | `display_name` field | read `display_name` instead of calling `name_get` |
 | `read_group` | still works, but `formatted_read_group` is the Odoo 19 native form | any model — ✓ both callable over JSON-2 |
 
-When any field guess fails: `python -m scripts.introspect <profile> --model <model>`
+When any field guess fails: `python3 -m scripts.introspect <profile> --model <model>`
 lists the real fields; `--find <word>` fuzzy-searches model names.
 
 ## Chatter: message_post double-escapes HTML by default
@@ -73,5 +73,5 @@ explicit `fields` list.
 `ir.attachment.datas` is the full file as base64 — a multi-MB context bomb
 over the API (and `read` without `fields` includes it). `/web/content/<id>`
 does NOT accept bearer API keys (✓ returns 404), so there is no streaming
-shortcut. Use `python -m scripts.get_attachment <profile> --id <id> --out <file>`,
+shortcut. Use `python3 -m scripts.get_attachment <profile> --id <id> --out <file>`,
 which decodes to disk and prints only path + metadata.

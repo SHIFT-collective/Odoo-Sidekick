@@ -20,9 +20,9 @@ Failure modes are intentional and graceful:
     release notes just won't be included.
 
 Usage:
-    python -m scripts.check_updates              # use cache if fresh
-    python -m scripts.check_updates --force      # bypass cache
-    python -m scripts.check_updates --json       # machine-readable
+    python3 -m scripts.check_updates              # use cache if fresh
+    python3 -m scripts.check_updates --force      # bypass cache
+    python3 -m scripts.check_updates --json       # machine-readable
 """
 from __future__ import annotations
 
@@ -179,6 +179,12 @@ def check(
                 if now - last_dt < timedelta(hours=cache_ttl_hours):
                     cached["from_cache"] = True
                     cached["local_version"] = local  # refresh local in case file changed
+                    # Recompute against the refreshed local version — after a
+                    # `git pull` the cached update_available would otherwise
+                    # keep announcing an update the user already has.
+                    if cached.get("latest_version"):
+                        cached["update_available"] = _is_newer(
+                            cached["latest_version"], local)
                     return cached
             except (ValueError, AttributeError, TypeError):
                 pass

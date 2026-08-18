@@ -17,20 +17,20 @@ Env var placeholders (${VAR}) are preserved verbatim — this tool never
 resolves or stores secrets.
 
 Usage:
-    python -m scripts.profiles list [--json]
-    python -m scripts.profiles show <name> [--json]
-    python -m scripts.profiles add <name> --url URL --api-key-env VAR [--mode MODE] [--database DB]
-    python -m scripts.profiles set <name> <key> <value>       # scalar keys
-    python -m scripts.profiles set <name> write_policy --json-value '{"allow": [...], "deny_models": [...]}'
-    python -m scripts.profiles unset <name> <key>
-    python -m scripts.profiles remove <name>
-    python -m scripts.profiles set-default <name>
-    python -m scripts.profiles migrate                        # rewrite as canonical JSON
+    python3 -m scripts.profiles list [--json]
+    python3 -m scripts.profiles show <name> [--json]
+    python3 -m scripts.profiles add <name> --url URL --api-key-env VAR [--mode MODE] [--database DB]
+    python3 -m scripts.profiles set <name> <key> <value>       # scalar keys
+    python3 -m scripts.profiles set <name> write_policy --json-value '{"allow": [...], "deny_models": [...]}'
+    python3 -m scripts.profiles unset <name> <key>
+    python3 -m scripts.profiles remove <name>
+    python3 -m scripts.profiles set-default <name>
+    python3 -m scripts.profiles migrate                        # rewrite as canonical JSON
 
 Examples:
-    python -m scripts.profiles set kingdom_prod mode read-write
-    python -m scripts.profiles set kingdom_prod require_auth_ref true
-    python -m scripts.profiles unset kingdom_prod confirm_cmd
+    python3 -m scripts.profiles set kingdom_prod mode read-write
+    python3 -m scripts.profiles set kingdom_prod require_auth_ref true
+    python3 -m scripts.profiles unset kingdom_prod confirm_cmd
 """
 from __future__ import annotations
 
@@ -152,7 +152,17 @@ class _Lock:
 
 def _atomic_write(path: Path, doc: dict[str, Any]) -> None:
     """Serialize as canonical JSON and rename into place. 0600 — the file may
-    hold inline API keys."""
+    hold inline API keys.
+
+    If `path` is a symlink, write through it to the real target rather than
+    replacing the link with a regular file: some deployments symlink
+    profiles.yaml at a canonical store (e.g. profiles.json), and a bare
+    os.replace here would silently break that link and desync tools that read
+    the target directly. Following the link keeps the write atomic on the
+    target's own filesystem.
+    """
+    if path.is_symlink():
+        path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
     try:
@@ -188,7 +198,7 @@ def _load_for_edit(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise ProfileError(
             f"No profiles file at {path}. Create one with "
-            "`python -m scripts.profiles add <name> --url ... --api-key-env VAR`."
+            "`python3 -m scripts.profiles add <name> --url ... --api-key-env VAR`."
         )
     return _load_config(path)
 
@@ -250,8 +260,15 @@ def cmd_list(path: Path, as_json: bool) -> int:
 def cmd_show(path: Path, name: str, as_json: bool) -> int:
     doc = _load_for_edit(path)
     p = _redacted_profile(_require_profile(doc, name))
-    json.dump(p, sys.stdout, indent=2)
-    sys.stdout.write("\n")
+    if as_json:
+        json.dump(p, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+    print(f"Profile {name!r} in {path}"
+          + (" (default)" if doc.get("default") == name else "") + ":")
+    for key, value in p.items():
+        rendered = json.dumps(value) if isinstance(value, (dict, list)) else value
+        print(f"  {key:<18} {rendered}")
     return 0
 
 
@@ -339,17 +356,16 @@ def cmd_remove(path: Path, name: str) -> int:
     with _Lock(path):
         doc = _load_for_edit(path)
         _require_profile(doc, name)
-        del doc["profiles"][name]
-        if doc.get("default") == name:
-            doc.pop("default", None)
-            remaining = sorted(doc["profiles"].keys())
-            if remaining:
-                doc["default"] = remaining[0]
-        if not doc["profiles"]:
+        # Refuse before mutating the in-memory doc — keeps the invariant local
+        # instead of depending on nothing being written before the raise.
+        if len(doc["profiles"]) == 1:
             raise ProfileError(
                 f"Refusing to remove the last profile. Delete {path} manually if "
                 "you really want an empty config."
             )
+        del doc["profiles"][name]
+        if doc.get("default") == name:
+            doc["default"] = sorted(doc["profiles"].keys())[0]
         _validate_document(doc)
         _atomic_write(path, doc)
     print(f"Removed profile {name!r} from {path}"
